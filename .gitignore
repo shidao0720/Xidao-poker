@@ -1,0 +1,70 @@
+# Java / Maven
+backend/target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+replay_pid*
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime data
+logs/
+tmp/
+temp/
+*.pid
+
+# IDE and editor state
+.idea/
+*.iml
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.project
+.classpath
+.settings/
+
+# Codex / Claude local workspace settings
+.claude/
+.codex/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Test and tool caches
+.pytest_cache/
+.cache/
+.eslintcache
+.stylelintcache
+
+# Local database and backup files
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.dump
+

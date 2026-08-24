@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect modules
+    runs-on: ubuntu-latest
+    outputs:
+      frontend-exists: ${{ steps.modules.outputs.frontend-exists }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect optional frontend module
+        id: modules
+        shell: bash
+        run: |
+          if [[ -f frontend/package.json ]]; then
+            echo "frontend-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "frontend-exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  backend:
+    name: Backend - Maven Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Test backend
+        working-directory: backend
+        run: mvn --batch-mode --no-transfer-progress test
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: backend/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  frontend:
+    name: Frontend - Reserved
+    needs: detect
+    if: needs.detect.outputs.frontend-exists == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint --if-present
+
+      - name: Type-check frontend
+        working-directory: frontend
+        run: npm run typecheck --if-present
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm run test --if-present
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build --if-present
