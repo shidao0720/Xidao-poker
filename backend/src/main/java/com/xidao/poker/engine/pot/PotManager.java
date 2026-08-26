@@ -14,6 +14,10 @@ public final class PotManager {
     }
 
     public static List<Pot> buildPots(List<Player> players) {
+        List<String> survivingPlayerIds = players.stream()
+                .filter(Player::isInHand)
+                .map(Player::id)
+                .toList();
         List<Integer> levels = players.stream()
                 .map(Player::totalContribution)
                 .filter(v -> v > 0)
@@ -31,6 +35,9 @@ public final class PotManager {
                     .filter(Player::isInHand)
                     .map(Player::id)
                     .toList();
+            // 正常下注不会产生无人有资格争夺的池；强制掉线弃牌可能产生这种边界。
+            // 此时该层作为 dead money，由仍留在本手牌中的玩家争夺，避免筹码丢失或卡局。
+            if (eligible.isEmpty()) eligible = survivingPlayerIds;
             if (amount > 0) pots.add(new Pot(amount, eligible));
             previous = level;
         }

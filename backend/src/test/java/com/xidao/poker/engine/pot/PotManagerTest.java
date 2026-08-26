@@ -77,6 +77,36 @@ class PotManagerTest {
                 .containsEntry("A", 7);
     }
 
+    @Test
+    void disconnectedDeadSidePotFallsBackToRemainingContenders() {
+        Player deepA = player("A", 0, 1_000);
+        Player deepB = player("B", 1, 1_000);
+        Player shortC = player("C", 2, 20);
+        Player shortD = player("D", 3, 20);
+        deepA.contribute(100);
+        deepB.contribute(100);
+        shortC.contribute(20);
+        shortD.contribute(20);
+        deepA.fold();
+        deepB.fold();
+
+        List<Pot> pots = PotManager.buildPots(List.of(deepA, deepB, shortC, shortD));
+
+        assertThat(pots).containsExactly(
+                new Pot(80, List.of("C", "D")),
+                new Pot(160, List.of("C", "D"))
+        );
+        PotManager.settle(
+                pots,
+                List.of(deepA, deepB, shortC, shortD),
+                Map.of("C", 30L, "D", 20L),
+                0,
+                10
+        );
+        assertThat(shortC.stack()).isEqualTo(240);
+        assertThat(deepA.stack() + deepB.stack() + shortC.stack() + shortD.stack()).isEqualTo(2_040);
+    }
+
     private static Player player(String id, int seat, int stack) {
         return new Player(id, id, seat, stack);
     }

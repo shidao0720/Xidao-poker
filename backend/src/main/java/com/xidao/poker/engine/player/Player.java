@@ -47,6 +47,18 @@ public final class Player {
         }
     }
 
+    /** 将有筹码的等待玩家或观察者加入下一手；不会恢复仍处于离线状态的玩家。 */
+    public void activateForNextHand() {
+        if (status == PlayerStatus.DISCONNECTED) {
+            throw new IllegalStateException("disconnected player cannot join a hand");
+        }
+        if (stack <= 0) {
+            status = PlayerStatus.BUSTED;
+            throw new IllegalStateException("player has no chips");
+        }
+        status = PlayerStatus.ACTIVE;
+    }
+
     public void beginStreet() {
         streetBet = 0;
         hasActed = false;
@@ -108,6 +120,21 @@ public final class Player {
         status = PlayerStatus.DISCONNECTED;
     }
 
+    /**
+     * 行动中的玩家掉线时保留 DISCONNECTED 生命周期，同时在当前手牌内按弃牌处理。
+     * 这样既能在 30 秒内重连，也不会占住行动指针或继续争夺尚未跟平的底池。
+     */
+    public void disconnectAndForfeitHand() {
+        if (status == PlayerStatus.DISCONNECTED) {
+            if (statusBeforeDisconnect == PlayerStatus.ACTIVE) {
+                statusBeforeDisconnect = PlayerStatus.FOLDED;
+            }
+            return;
+        }
+        statusBeforeDisconnect = status == PlayerStatus.ACTIVE ? PlayerStatus.FOLDED : status;
+        status = PlayerStatus.DISCONNECTED;
+    }
+
     public void reconnect() {
         requireStatus(PlayerStatus.DISCONNECTED, "player is not disconnected");
         status = statusBeforeDisconnect == null ? PlayerStatus.SPECTATOR : statusBeforeDisconnect;
@@ -120,6 +147,31 @@ public final class Player {
 
     public void becomeSpectator() {
         status = PlayerStatus.SPECTATOR;
+    }
+
+    /** 一手结束后清理手内状态，同时保留离线生命周期供重连。 */
+    public void finishHand() {
+        PlayerStatus next = stack == 0 ? PlayerStatus.BUSTED : PlayerStatus.ACTIVE;
+        if (status == PlayerStatus.DISCONNECTED) {
+            statusBeforeDisconnect = next;
+        } else {
+            status = next;
+            statusBeforeDisconnect = null;
+        }
+        hasActed = false;
+        streetBet = 0;
+    }
+
+    public boolean isDisconnected() {
+        return status == PlayerStatus.DISCONNECTED;
+    }
+
+    public boolean isSpectator() {
+        return effectiveStatus() == PlayerStatus.SPECTATOR;
+    }
+
+    public boolean isBusted() {
+        return effectiveStatus() == PlayerStatus.BUSTED;
     }
 
     private PlayerStatus effectiveStatus() {

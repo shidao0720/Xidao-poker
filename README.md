@@ -4,7 +4,7 @@
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：早期开发阶段。牌组、五张/七张牌型判定、玩家状态、下注轮转、短码 All-in 和主池/边池结算已具备单元测试；完整牌局状态机、网络层、持久化和前端仍在开发中。
+> 当前状态：核心游戏引擎阶段。`GameSession` / `Hand` 显式状态机、最多 10 人行动轮转、盲注、发牌、四轮下注、自动摊牌、底池结算、破产淘汰、断线防卡局、查看者过滤快照和有序事件已经实现并通过测试；网络层、持久化和前端仍在开发中。
 
 ## 目标游戏流程
 
@@ -159,13 +159,34 @@ ACTIVE / FOLDED / ALL_IN / DISCONNECTED / SPECTATOR / BUSTED
 
 所有行动轮转统一依赖 `player.canAct()`。Folded、All-in、Disconnected、Spectator 和 Busted 玩家不会进入行动队列。
 
-### 7. 手牌比较使用可排序数值键
+掉线不会被伪装成 `SPECTATOR`：
+
+- 尚可行动的玩家掉线后，保留 `DISCONNECTED` 生命周期，并在当前手按 Folded 处理
+- 已经 All-in 的玩家掉线后仍保留摊牌和获奖资格
+- 当前手因掉线弃牌后，即使马上重连，也只恢复观看，不重新进入该手行动队列
+- 席位和筹码继续保留，下一手是否参与由连接、筹码和准备状态重新筛选
+
+第一版引擎采用立即让掉线的可行动玩家退出当前手的确定性语义。应用层后续可以在调用引擎前增加断线宽限计时，但计时器不能让 `currentActor` 永久停留在离线玩家身上。
+
+### 7. 行动指针采用防卡局硬约束
+
+底层状态机始终维护以下不变量：
+
+```text
+currentActor != null  →  currentActor.canAct() == true
+下注街尚未结束       →  必须存在一个 canAct() 的 currentActor
+不存在可行动玩家     →  自动推进公共牌、摊牌或结算
+```
+
+`SPECTATOR` 和 `BUSTED` 玩家只存在于 `GameSession`，不会被放入当前 `Hand` 的参与者集合。Fold、All-in、掉线等资格变化发生后，`BettingRound` 会立即重新计算行动者；任何 `TURN_CHANGED` 事件在发出前还会再次验证目标可以行动。这些约束专门防止“轮到观察者或离线玩家后无人可操作”的卡局。
+
+### 8. 手牌比较使用可排序数值键
 
 五张牌被编码为一个可直接比较大小的 `long`：高位保存牌型等级，低位保存用于平局比较的 rank/kicker。七张牌遍历 `C(7,5) = 21` 种组合，选择最大值。
 
 相比一开始就实现高度优化的查表算法，21 次五张牌评估更容易验证，且对最多 10 人的人工牌局完全足够。这里优先选择正确性和可测试性。
 
-### 8. Snapshot + Event 同步
+### 9. Snapshot + Event 同步
 
 客户端通过两种数据保持同步：
 
@@ -179,9 +200,12 @@ ACTIVE / FOLDED / ALL_IN / DISCONNECTED / SPECTATOR / BUSTED
 - Royal Flush 不作为独立牌型等级；它是 Ace-high Straight Flush。
 - `A-2-3-4-5` 的顺子 high card 为 5。
 - Bet 和 Raise 的金额使用 `raiseTo` 语义，即“本街总下注达到多少”，避免客户端和服务端对增量金额理解不一致。
-- Short All-in 可以提高 `currentBet`，但不足一次完整加注时不会重置其他玩家的加注权。
+- 单次 Short All-in 可以提高 `currentBet`，但不足一次完整加注时不会重新开放已行动玩家的加注权；多个 Short All-in 累计达到完整加注额时会重新开放。该行为遵循 [Poker TDA Rule 47](https://www.pokertda.com/view-poker-tda-rules/)。
+- 大盲短码 All-in 时，Preflop 的 bring-in 仍按完整大盲计算。
 - Side Pot 根据整手牌累计投入分层构造；弃牌玩家的筹码保留在底池中，但不具备获奖资格。
+- 强制掉线弃牌导致某个边池没有常规获奖资格者时，该层作为 dead money 由仍留在手牌中的玩家争夺，保证筹码守恒且结算不会中断。
 - 平分底池产生的奇数筹码，从 Button 左侧第一个获胜玩家开始顺时针分配，以保证结果确定。
+- 观察者不能查看未公开手牌；只显示查看者自己的手牌和 Showdown 后实际摊牌玩家的手牌。
 
 ## WebSocket 协议原则
 
@@ -232,7 +256,7 @@ timestamp level module roomId gameId handId playerId event
 
 ### Debug Snapshot
 
-游戏引擎将提供 `snapshot(viewerId)`：
+游戏引擎提供 `snapshot(viewerId)`：
 
 - phase
 - player status 与 stack
@@ -264,6 +288,7 @@ Correctness → State Consistency → Debuggability → Features
 - Pot：Main Pot、多个 Side Pot、Folded contribution、Split Pot、奇数筹码
 - State Machine：合法转换与非法阶段操作
 - Player Lifecycle：Disconnect、Reconnect、Busted、Spectator
+- Invariants：观察者、破产、弃牌、All-in 和离线玩家永远不会成为当前行动者
 
 ### 流程测试
 
@@ -276,6 +301,8 @@ Correctness → State Consistency → Debuggability → Features
 - 玩家破产并进入观战
 - 观战者中途加入
 - 房主断线后的所有权转移
+- 10 人完整行动与筹码守恒
+- 短大盲、累计 Short All-in 和掉线后的 dead money 结算
 
 ### 故障测试
 
@@ -294,7 +321,7 @@ cd backend
 mvn test
 ```
 
-当前基线：28 个游戏引擎测试通过。该数字会随开发持续增长，以 CI 的实际结果为准。
+当前基线：54 个游戏引擎测试通过，0 failures / 0 errors。该数字会随开发持续增长，以 CI 的实际结果为准。
 
 ## Git 工作流
 
@@ -415,8 +442,11 @@ Xidao-poker/
 │       │       ├── card/
 │       │       ├── deck/
 │       │       ├── eval/
+│       │       ├── event/
+│       │       ├── game/
 │       │       ├── player/
 │       │       ├── pot/
+│       │       ├── snapshot/
 │       │       └── table/
 │       └── test/java/com/xidao/poker/engine/
 ├── frontend/                  # 计划
@@ -431,15 +461,18 @@ Xidao-poker/
 - [x] 玩家生命周期基础模型
 - [x] 无限注下注轮基础规则
 - [x] Main Pot / Side Pot / Split Pot
-- [ ] `GameSession` 与 `Hand` 完整状态机
-- [ ] 房间管理与房主转移
+- [x] `GameSession` 与 `Hand` 核心状态机
+- [x] 查看者过滤 Snapshot、单调递增 Event 与房主转移底层逻辑
+- [x] 观察者 / 破产 / 掉线玩家防卡局约束
+- [ ] 房间应用服务与大厅管理
 - [ ] Spring HTTP API
-- [ ] WebSocket 协议、Snapshot 与 Event
+- [ ] WebSocket 协议与实时广播
 - [ ] PostgreSQL 历史数据持久化
 - [ ] React 大厅、房间和牌桌界面
 - [ ] 断线重连与观战流程
 - [ ] 多浏览器 10 人局域网联调
-- [ ] CI、容器化与首个 GitHub Release
+- [x] Backend Maven Test CI（前端模块不存在时自动跳过）
+- [ ] 容器化与首个 GitHub Release
 
 ## 安全与公平性说明
 

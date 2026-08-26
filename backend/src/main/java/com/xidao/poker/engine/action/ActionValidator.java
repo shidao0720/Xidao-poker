@@ -16,7 +16,13 @@ public final class ActionValidator {
         }
     }
 
-    public static void validateBet(Player player, PlayerAction action, int currentBet, int minRaise) {
+    public static void validateBet(
+            Player player,
+            PlayerAction action,
+            int currentBet,
+            int minRaise,
+            boolean raiseReopened
+    ) {
         int toCall = Math.max(0, currentBet - player.streetBet());
         int target = action.amount();
         switch (action.type()) {
@@ -32,25 +38,28 @@ public final class ActionValidator {
             case BET -> {
                 if (currentBet != 0) reject(ActionErrorCode.INVALID_ACTION, "use raise when a bet exists");
                 validateTarget(player, target);
-                if (target < minRaise && target != player.streetBet() + player.stack()) {
+                if (target < minRaise) {
                     reject(ActionErrorCode.INVALID_AMOUNT, "bet is below minimum");
                 }
             }
             case RAISE -> {
                 if (currentBet == 0) reject(ActionErrorCode.INVALID_ACTION, "use bet when no bet exists");
-                if (player.hasActed()) {
+                if (!raiseReopened) {
                     reject(ActionErrorCode.INVALID_ACTION, "raising is not reopened after a short all-in");
                 }
                 validateTarget(player, target);
                 if (target <= currentBet) reject(ActionErrorCode.INVALID_AMOUNT, "raise must exceed current bet");
                 int raiseBy = target - currentBet;
-                boolean allInTarget = target == player.streetBet() + player.stack();
-                if (raiseBy < minRaise && !allInTarget) {
+                if (raiseBy < minRaise) {
                     reject(ActionErrorCode.INVALID_AMOUNT, "raise is below minimum");
                 }
             }
             case ALL_IN -> {
                 if (player.stack() <= 0) reject(ActionErrorCode.INSUFFICIENT_CHIPS, "player has no chips");
+                int allInTarget = player.streetBet() + player.stack();
+                if (!raiseReopened && allInTarget > currentBet) {
+                    reject(ActionErrorCode.INVALID_ACTION, "raising is not reopened after a short all-in");
+                }
             }
         }
     }
