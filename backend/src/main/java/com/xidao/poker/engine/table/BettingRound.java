@@ -6,6 +6,7 @@ import com.xidao.poker.engine.action.ActionValidator;
 import com.xidao.poker.engine.action.IllegalActionException;
 import com.xidao.poker.engine.action.PlayerAction;
 import com.xidao.poker.engine.player.Player;
+import com.xidao.poker.engine.snapshot.ActionOptions;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,10 +27,23 @@ public final class BettingRound {
     private Integer lastAggressorSeat;
 
     public BettingRound(List<Player> players, int firstActorSeat, int currentBet, int minRaise, int maxSeats) {
-        if (players == null || players.stream().filter(Player::isInHand).count() < 2) {
+        if (players == null || players.stream().anyMatch(java.util.Objects::isNull)
+                || players.stream().filter(Player::isInHand).count() < 2) {
             throw new IllegalArgumentException("at least two hand participants required");
         }
+        if (maxSeats < 2 || maxSeats > 10) throw new IllegalArgumentException("max seats must be 2..10");
+        if (firstActorSeat < 0 || firstActorSeat >= maxSeats) {
+            throw new IllegalArgumentException("first actor seat must belong to the table");
+        }
+        if (currentBet < 0) throw new IllegalArgumentException("current bet cannot be negative");
         if (minRaise <= 0) throw new IllegalArgumentException("minimum raise must be positive");
+        if (players.stream().map(Player::id).distinct().count() != players.size()
+                || players.stream().map(Player::seat).distinct().count() != players.size()) {
+            throw new IllegalArgumentException("players must have distinct ids and seats");
+        }
+        if (players.stream().anyMatch(player -> player.seat() >= maxSeats)) {
+            throw new IllegalArgumentException("player seat is outside the table");
+        }
         this.players = new ArrayList<>(players);
         this.players.sort(Comparator.comparingInt(Player::seat));
         this.currentBet = currentBet;
@@ -111,6 +125,27 @@ public final class BettingRound {
             }
         }
         return Set.copyOf(actions);
+    }
+
+    public ActionOptions actionOptions(String playerId) {
+        Player player = findPlayer(playerId);
+        Set<ActionType> actions = legalActions(playerId);
+        if (actions.isEmpty()) return ActionOptions.none();
+
+        int toCall = Math.max(0, currentBet - player.streetBet());
+        int maximumTo = Math.addExact(player.streetBet(), player.stack());
+        Integer minimumBetTo = actions.contains(ActionType.BET) ? minRaise : null;
+        Integer minimumRaiseTo = actions.contains(ActionType.RAISE)
+                ? Math.addExact(currentBet, minRaise)
+                : null;
+        return new ActionOptions(
+                actions,
+                toCall,
+                Math.min(toCall, player.stack()),
+                minimumBetTo,
+                minimumRaiseTo,
+                maximumTo
+        );
     }
 
     public boolean isComplete() {

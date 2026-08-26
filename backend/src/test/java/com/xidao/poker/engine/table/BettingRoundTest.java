@@ -206,6 +206,13 @@ class BettingRoundTest {
         assertThat(round.actorSeat()).isNull();
     }
 
+    @Test
+    void actionIntentRejectsAmountsOnNonMonetaryActions() {
+        assertThatThrownBy(() -> new PlayerAction("A", ActionType.CALL, 20))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not accept");
+    }
+
     private static Player player(String id, int seat, int stack) {
         return new Player(id, id, seat, stack);
     }

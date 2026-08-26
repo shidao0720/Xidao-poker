@@ -12,8 +12,10 @@ import com.xidao.poker.engine.event.GameEvent;
 import com.xidao.poker.engine.event.GameEventType;
 import com.xidao.poker.engine.player.Player;
 import com.xidao.poker.engine.player.PlayerStatus;
+import com.xidao.poker.engine.pot.Pot;
 import com.xidao.poker.engine.pot.PotAward;
 import com.xidao.poker.engine.pot.PotManager;
+import com.xidao.poker.engine.snapshot.ActionOptions;
 import com.xidao.poker.engine.table.BettingActionResult;
 import com.xidao.poker.engine.table.BettingRound;
 
@@ -23,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 /**
@@ -39,19 +42,29 @@ public final class Hand {
     private final Deck deck;
     private final int buttonSeat;
     private final List<Card> communityCards = new ArrayList<>(5);
-    private final List<GameEvent> eventLog = new ArrayList<>();
     private final Set<String> showdownPlayerIds = new LinkedHashSet<>();
+    private List<GameEvent> emittedEvents;
+    private List<Pot> settledPots = List.of();
     private List<PotAward> awards = List.of();
     private GamePhase phase = GamePhase.DEALING;
     private BettingRound bettingRound;
     private int smallBlindSeat;
     private int bigBlindSeat;
+    private long turnCounter;
+    private long currentTurnId;
     private boolean started;
 
     public Hand(long id, GameConfig config, List<Player> participants, int buttonSeat, long seed) {
+        this(id, config, participants, buttonSeat, new Random(seed));
+    }
+
+    Hand(long id, GameConfig config, List<Player> participants, int buttonSeat, Random shuffleRandom) {
         if (id <= 0) throw new IllegalArgumentException("hand id must be positive");
         if (config == null) throw new IllegalArgumentException("game config is required");
         if (participants == null) throw new IllegalArgumentException("participants are required");
+        if (participants.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new IllegalArgumentException("participants cannot contain null");
+        }
         long eligible = participants.stream()
                 .filter(p -> p.stack() > 0 && !p.isDisconnected() && !p.isSpectator() && !p.isBusted())
                 .count();
@@ -62,6 +75,9 @@ public final class Hand {
         if (eligible > config.maxPlayers()) throw new IllegalArgumentException("too many participants");
         if (participants.stream().map(Player::seat).distinct().count() != participants.size()) {
             throw new IllegalArgumentException("duplicate seat");
+        }
+        if (participants.stream().anyMatch(player -> player.seat() >= config.maxPlayers())) {
+            throw new IllegalArgumentException("participant seat is outside the table");
         }
         if (participants.stream().map(Player::id).distinct().count() != participants.size()) {
             throw new IllegalArgumentException("duplicate player id");
@@ -76,12 +92,15 @@ public final class Hand {
         this.playersById = new LinkedHashMap<>();
         this.participants.forEach(p -> this.playersById.put(p.id(), p));
         this.buttonSeat = buttonSeat;
-        this.deck = new Deck(seed);
+        this.deck = new Deck(shuffleRandom);
     }
 
-    public List<GameEvent> start() {
+    List<GameEvent> start() {
+        return collectEvents(this::startInternal);
+    }
+
+    private void startInternal() {
         if (started) throw new IllegalStateException("hand already started");
-        int before = eventLog.size();
         started = true;
         for (Player player : participants) {
             player.beginHand();
@@ -101,18 +120,29 @@ public final class Hand {
         openBettingRound(firstActor, config.bigBlind());
         advanceAutomaticallyIfNeeded();
         assertActorInvariant();
-        return eventsSince(before);
     }
 
-    public List<GameEvent> handle(PlayerAction action) {
+    List<GameEvent> handle(PlayerAction action) {
+        return collectEvents(() -> handleInternal(action));
+    }
+
+    List<GameEvent> handle(PlayerAction action, long expectedTurnId) {
+        if (expectedTurnId != currentTurnId) {
+            throw new IllegalActionException(ActionErrorCode.STALE_TURN, "action belongs to an expired turn");
+        }
+        return handle(action);
+    }
+
+    private void handleInternal(PlayerAction action) {
         if (!started) throw new IllegalStateException("hand has not started");
         if (!phase.isBettingPhase() || bettingRound == null) {
             throw new IllegalActionException(ActionErrorCode.INVALID_PHASE, "actions are not allowed in " + phase);
         }
-        int before = eventLog.size();
+        long actedTurnId = currentTurnId;
         BettingActionResult result = bettingRound.act(action);
         Player player = requirePlayer(action.playerId());
         emit(GameEventType.PLAYER_ACTION, player.id(), Map.of(
+                "turnId", actedTurnId,
                 "action", action.type().name(),
                 "paid", result.paid(),
                 "stack", player.stack(),
@@ -122,20 +152,24 @@ public final class Hand {
         ));
 
         if (result.roundComplete()) {
+            currentTurnId = 0;
             advanceAutomaticallyIfNeeded();
         } else {
             emitTurnChanged();
         }
         assertActorInvariant();
-        return eventsSince(before);
     }
 
     /**
      * 掉线不会把玩家伪装成观察者。ACTIVE 玩家按当前手弃牌；ALL_IN 玩家仍保留摊牌资格。
      */
-    public List<GameEvent> disconnect(String playerId) {
-        int before = eventLog.size();
+    List<GameEvent> disconnect(String playerId) {
+        return collectEvents(() -> disconnectInternal(playerId));
+    }
+
+    private void disconnectInternal(String playerId) {
         Player player = requirePlayer(playerId);
+        if (player.isDisconnected()) return;
         Integer previousActor = currentActorSeat();
         if (player.status() == PlayerStatus.ACTIVE) {
             player.disconnectAndForfeitHand();
@@ -150,18 +184,22 @@ public final class Hand {
         if (phase.isBettingPhase() && bettingRound != null) {
             boolean complete = bettingRound.reconcileAfterEligibilityChange(player.seat());
             if (complete) {
+                currentTurnId = 0;
                 advanceAutomaticallyIfNeeded();
             } else if (!java.util.Objects.equals(previousActor, currentActorSeat())) {
                 emitTurnChanged();
             }
         }
         assertActorInvariant();
-        return eventsSince(before);
     }
 
-    public List<GameEvent> reconnect(String playerId) {
-        int before = eventLog.size();
+    List<GameEvent> reconnect(String playerId) {
+        return collectEvents(() -> reconnectInternal(playerId));
+    }
+
+    private void reconnectInternal(String playerId) {
         Player player = requirePlayer(playerId);
+        if (!player.isDisconnected()) return;
         player.reconnect();
         emit(GameEventType.PLAYER_RECONNECTED, player.id(), Map.of(
                 "seat", player.seat(),
@@ -169,7 +207,6 @@ public final class Hand {
         ));
         // 当前手已因掉线弃牌的玩家只能观看到本手结束，不会重新进入行动队列。
         assertActorInvariant();
-        return eventsSince(before);
     }
 
     private void determineBlindSeats() {
@@ -239,6 +276,7 @@ public final class Hand {
 
     private void openBettingRound(int firstActorSeat, int currentBet) {
         bettingRound = new BettingRound(participants, firstActorSeat, currentBet, config.bigBlind(), config.maxPlayers());
+        if (bettingRound.actorSeat() == null) currentTurnId = 0;
     }
 
     private void settleWithoutShowdown() {
@@ -247,6 +285,7 @@ public final class Hand {
         transitionTo(GamePhase.SETTLEMENT);
         Player winner = remaining.getFirst();
         int amount = potAmount();
+        settledPots = List.of(new Pot(amount, List.of(winner.id())));
         winner.addWinnings(amount);
         awards = List.of(new PotAward(amount, Map.of(winner.id(), amount)));
         emit(GameEventType.SETTLEMENT, winner.id(), Map.of(
@@ -273,8 +312,9 @@ public final class Hand {
         ));
 
         transitionTo(GamePhase.SETTLEMENT);
+        settledPots = PotManager.buildPots(participants);
         awards = PotManager.settle(
-                PotManager.buildPots(participants), participants, handKeys, buttonSeat, config.maxPlayers());
+                settledPots, participants, handKeys, buttonSeat, config.maxPlayers());
         emit(GameEventType.SETTLEMENT, null, Map.of(
                 "showdown", true,
                 "awards", awards
@@ -291,6 +331,7 @@ public final class Hand {
             }
         }
         bettingRound = null;
+        currentTurnId = 0;
         transitionTo(GamePhase.ROUND_END);
         emit(GameEventType.HAND_ENDED, null, Map.of(
                 "pot", potAmount(),
@@ -314,19 +355,29 @@ public final class Hand {
         if (player == null || !player.canAct()) {
             throw new IllegalStateException("TURN_CHANGED cannot target a player who cannot act");
         }
+        currentTurnId = ++turnCounter;
         emit(GameEventType.TURN_CHANGED, player.id(), Map.of(
                 "seat", actor,
+                "turnId", currentTurnId,
                 "currentBet", bettingRound.currentBet(),
                 "minimumRaise", bettingRound.minRaise()
         ));
     }
 
     private void emit(GameEventType type, String playerId, Map<String, Object> data) {
-        eventLog.add(GameEvent.of(type, id, playerId, data));
+        if (emittedEvents == null) throw new IllegalStateException("events can only be emitted while handling a command");
+        emittedEvents.add(GameEvent.of(type, id, playerId, data));
     }
 
-    private List<GameEvent> eventsSince(int index) {
-        return List.copyOf(eventLog.subList(index, eventLog.size()));
+    private List<GameEvent> collectEvents(Runnable operation) {
+        if (emittedEvents != null) throw new IllegalStateException("nested command execution is not supported");
+        emittedEvents = new ArrayList<>();
+        try {
+            operation.run();
+            return List.copyOf(emittedEvents);
+        } finally {
+            emittedEvents = null;
+        }
     }
 
     private int nextParticipantSeat(int afterSeat) {
@@ -368,12 +419,14 @@ public final class Hand {
             if (phase.isBettingPhase() && bettingRound != null && !bettingRound.isComplete()) {
                 throw new IllegalStateException("an incomplete betting phase must have an actor");
             }
+            if (currentTurnId != 0) throw new IllegalStateException("a hand without an actor cannot expose a turn id");
             return;
         }
         Player player = playerAt(actor);
         if (player == null || !player.canAct()) {
             throw new IllegalStateException("current actor must be able to act");
         }
+        if (currentTurnId <= 0) throw new IllegalStateException("a current actor must have a turn id");
     }
 
     public long id() { return id; }
@@ -382,17 +435,35 @@ public final class Hand {
     public int smallBlindSeat() { return smallBlindSeat; }
     public int bigBlindSeat() { return bigBlindSeat; }
     public Integer currentActorSeat() { return bettingRound == null ? null : bettingRound.actorSeat(); }
+    public String currentActorPlayerId() {
+        Integer seat = currentActorSeat();
+        Player player = seat == null ? null : playerAt(seat);
+        return player == null ? null : player.id();
+    }
+    public long currentTurnId() { return currentTurnId; }
     public int currentBet() { return bettingRound == null ? 0 : bettingRound.currentBet(); }
     public int minimumRaise() { return bettingRound == null ? config.bigBlind() : bettingRound.minRaise(); }
-    public int potAmount() { return participants.stream().mapToInt(Player::totalContribution).sum(); }
+    public int potAmount() {
+        int total = 0;
+        for (Player player : participants) total = Math.addExact(total, player.totalContribution());
+        return total;
+    }
+    public List<Pot> currentPots() {
+        return settledPots.isEmpty() ? PotManager.buildPots(participants) : settledPots;
+    }
     public List<Card> communityCards() { return List.copyOf(communityCards); }
     public List<Player> participants() { return List.copyOf(participants); }
     public List<PotAward> awards() { return awards; }
-    public List<GameEvent> eventLog() { return List.copyOf(eventLog); }
 
     public Set<ActionType> legalActions(String playerId) {
-        if (!phase.isBettingPhase() || bettingRound == null || !playersById.containsKey(playerId)) return Set.of();
-        return bettingRound.legalActions(playerId);
+        return actionOptions(playerId).legalActions();
+    }
+
+    public ActionOptions actionOptions(String playerId) {
+        if (!phase.isBettingPhase() || bettingRound == null || !playersById.containsKey(playerId)) {
+            return ActionOptions.none();
+        }
+        return bettingRound.actionOptions(playerId);
     }
 
     public List<Card> visibleHoleCards(String viewerId, String targetPlayerId) {

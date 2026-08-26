@@ -1,6 +1,8 @@
 package com.xidao.poker.engine.game;
 
+import com.xidao.poker.engine.action.ActionErrorCode;
 import com.xidao.poker.engine.action.ActionType;
+import com.xidao.poker.engine.action.IllegalActionException;
 import com.xidao.poker.engine.action.PlayerAction;
 import com.xidao.poker.engine.event.GameEvent;
 import com.xidao.poker.engine.event.GameEventType;
@@ -10,6 +12,7 @@ import com.xidao.poker.engine.snapshot.GameSnapshot;
 import com.xidao.poker.engine.snapshot.PlayerSnapshot;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -31,11 +34,11 @@ class GameSessionTest {
 
         session.setReady("B", true);
         assertThat(session.phase()).isEqualTo(GamePhase.READY);
-        session.startGame("A");
+        List<GameEvent> events = session.startGame("A");
 
         assertThat(session.phase()).isEqualTo(GamePhase.PREFLOP);
         assertThat(session.currentHand()).isNotNull();
-        assertThat(session.eventLog()).extracting(GameEvent::type)
+        assertThat(events).extracting(GameEvent::type)
                 .contains(GameEventType.GAME_STARTED, GameEventType.HAND_STARTED);
     }
 
@@ -63,16 +66,16 @@ class GameSessionTest {
         Player observer = player(session, "O");
 
         assertThat(session.snapshot("O").currentActorSeat()).isEqualTo(player(session, "A").seat());
-        session.disconnect("A");
+        List<GameEvent> events = new ArrayList<>(session.disconnect("A"));
         assertThat(session.snapshot("O").currentActorSeat()).isEqualTo(player(session, "B").seat());
 
-        session.disconnect("B");
+        events.addAll(session.disconnect("B"));
 
         GameSnapshot settled = session.snapshot("O");
         assertThat(settled.phase()).isEqualTo(GamePhase.ROUND_END);
         assertThat(settled.currentActorSeat()).isNull();
         assertThat(observer.status()).isEqualTo(PlayerStatus.SPECTATOR);
-        assertThat(session.eventLog())
+        assertThat(events)
                 .filteredOn(e -> e.type() == GameEventType.TURN_CHANGED)
                 .allSatisfy(event -> assertThat(event.playerId()).isNotEqualTo("O"));
     }
@@ -93,6 +96,52 @@ class GameSessionTest {
     }
 
     @Test
+    void reconnectingAfterMissingNextHandWaitsAsSpectator() {
+        GameSession session = startedThreePlayerSession();
+        session.disconnect("A");
+        playPassivelyUntilSettled(session);
+        session.startGame(session.ownerId());
+
+        assertThat(session.currentHand().containsPlayer("A")).isFalse();
+        session.reconnect("A");
+
+        GameSnapshot snapshot = session.snapshot("A");
+        assertThat(player(session, "A").status()).isEqualTo(PlayerStatus.SPECTATOR);
+        assertThat(snapshot.legalActions()).isEmpty();
+        assertThat(snapshot.players()).filteredOn(p -> p.id().equals("A")).singleElement()
+                .satisfies(player -> {
+                    assertThat(player.inHand()).isFalse();
+                    assertThat(player.canAct()).isFalse();
+                    assertThat(player.holeCards()).isEmpty();
+                });
+    }
+
+    @Test
+    void staleHandAndTurnCommandsNeverMutateChips() {
+        GameSession session = startedThreePlayerSession();
+        GameSnapshot actor = session.snapshot("A");
+
+        assertThatThrownBy(() -> session.handle(
+                actor.handId() + 1,
+                actor.turnId(),
+                PlayerAction.call("A")
+        )).isInstanceOfSatisfying(IllegalActionException.class,
+                error -> assertThat(error.code()).isEqualTo(ActionErrorCode.STALE_HAND));
+        assertThat(player(session, "A").stack()).isEqualTo(1_000);
+
+        session.handle(actor.handId(), actor.turnId(), PlayerAction.call("A"));
+        assertThat(player(session, "A").stack()).isEqualTo(980);
+
+        assertThatThrownBy(() -> session.handle(
+                actor.handId(),
+                actor.turnId(),
+                PlayerAction.call("A")
+        )).isInstanceOfSatisfying(IllegalActionException.class,
+                error -> assertThat(error.code()).isEqualTo(ActionErrorCode.STALE_TURN));
+        assertThat(player(session, "A").stack()).isEqualTo(980);
+    }
+
+    @Test
     void ownerDisconnectTransfersOwnershipToNextConnectedPlayer() {
         GameSession session = startedThreePlayerSession();
 
@@ -100,6 +149,18 @@ class GameSessionTest {
 
         assertThat(session.ownerId()).isEqualTo("B");
         assertThat(events).extracting(GameEvent::type).contains(GameEventType.OWNER_CHANGED);
+    }
+
+    @Test
+    void firstNewConnectedPlayerReplacesAnOtherwiseStrandedOfflineOwner() {
+        GameSession session = session(CONFIG, 9L, "A");
+        session.disconnect("A");
+
+        List<GameEvent> events = session.addPlayer("B", "B");
+
+        assertThat(session.ownerId()).isEqualTo("B");
+        assertThat(events).extracting(GameEvent::type)
+                .containsExactly(GameEventType.PLAYER_JOINED, GameEventType.OWNER_CHANGED);
     }
 
     @Test
@@ -143,13 +204,54 @@ class GameSessionTest {
 
     @Test
     void eventSequencesAreStrictlyIncreasing() {
-        GameSession session = startedThreePlayerSession();
+        GameSession session = new GameSession("room-1", CONFIG, 42L);
+        List<GameEvent> events = new ArrayList<>();
+        for (String id : List.of("A", "B", "C")) events.addAll(session.addPlayer(id, id));
+        for (String id : List.of("A", "B", "C")) events.addAll(session.setReady(id, true));
+        events.addAll(session.startGame("A"));
 
-        List<Long> sequences = session.eventLog().stream().map(GameEvent::sequence).toList();
+        List<Long> sequences = events.stream().map(GameEvent::sequence).toList();
 
         assertThat(sequences).isSorted().doesNotHaveDuplicates();
         assertThat(sequences.getFirst()).isEqualTo(1L);
         assertThat(session.snapshot("A").lastSequence()).isEqualTo(sequences.getLast());
+    }
+
+    @Test
+    void tenPlayerHandCompletesWithoutGhostActorsAndConservesChips() {
+        String[] ids = {"P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"};
+        GameSession session = session(CONFIG, 8080L, ids);
+        session.players().forEach(player -> session.setReady(player.id(), true));
+
+        session.startGame("P0");
+
+        assertThat(session.currentHand().participants()).hasSize(10)
+                .allSatisfy(player -> assertThat(player.holeCards()).hasSize(2));
+        playPassivelyUntilSettled(session);
+        assertThat(session.phase()).isEqualTo(GamePhase.ROUND_END);
+        assertThat(session.players().stream().mapToInt(Player::stack).sum()).isEqualTo(10_000);
+        assertThat(session.snapshot("P0").currentActorSeat()).isNull();
+    }
+
+    @Test
+    void deterministicSeedReproducesTheSamePrivateDeal() {
+        GameSession first = session(CONFIG, 4242L, "A", "B", "C");
+        GameSession second = session(CONFIG, 4242L, "A", "B", "C");
+        first.players().forEach(player -> first.setReady(player.id(), true));
+        second.players().forEach(player -> second.setReady(player.id(), true));
+
+        first.startGame("A");
+        second.startGame("A");
+
+        for (String playerId : List.of("A", "B", "C")) {
+            List<com.xidao.poker.engine.card.Card> firstCards = first.snapshot(playerId).players().stream()
+                    .filter(player -> player.id().equals(playerId))
+                    .findFirst().orElseThrow().holeCards();
+            List<com.xidao.poker.engine.card.Card> secondCards = second.snapshot(playerId).players().stream()
+                    .filter(player -> player.id().equals(playerId))
+                    .findFirst().orElseThrow().holeCards();
+            assertThat(firstCards).containsExactlyElementsOf(secondCards);
+        }
     }
 
     private static GameSession startedThreePlayerSession() {

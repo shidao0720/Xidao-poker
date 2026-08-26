@@ -3,6 +3,7 @@ package com.xidao.poker.engine.snapshot;
 import com.xidao.poker.engine.action.ActionType;
 import com.xidao.poker.engine.card.Card;
 import com.xidao.poker.engine.game.GamePhase;
+import com.xidao.poker.engine.pot.Pot;
 import com.xidao.poker.engine.pot.PotAward;
 
 import java.util.List;
@@ -18,19 +19,27 @@ public record GameSnapshot(
         Integer smallBlindSeat,
         Integer bigBlindSeat,
         Integer currentActorSeat,
+        long turnId,
         int currentBet,
         int minimumRaise,
         int pot,
+        List<Pot> pots,
         List<Card> communityCards,
         List<PlayerSnapshot> players,
-        Set<ActionType> legalActions,
+        ActionOptions actionOptions,
         List<PotAward> awards,
         long lastSequence
 ) {
     public GameSnapshot {
+        pots = pots == null ? List.of() : List.copyOf(pots);
         communityCards = communityCards == null ? List.of() : List.copyOf(communityCards);
         players = players == null ? List.of() : List.copyOf(players);
-        legalActions = legalActions == null ? Set.of() : Set.copyOf(legalActions);
+        actionOptions = actionOptions == null ? ActionOptions.none() : actionOptions;
         awards = awards == null ? List.of() : List.copyOf(awards);
+    }
+
+    /** 保留便利访问器，调用方无需从 ActionOptions 再取一次集合。 */
+    public Set<ActionType> legalActions() {
+        return actionOptions.legalActions();
     }
 }

@@ -7,6 +7,9 @@ public record PlayerAction(String playerId, ActionType type, int amount) {
     public PlayerAction {
         if (playerId == null || playerId.isBlank()) throw new IllegalArgumentException("player id is required");
         if (type == null) throw new IllegalArgumentException("action type is required");
+        boolean requiresAmount = type == ActionType.BET || type == ActionType.RAISE;
+        if (requiresAmount && amount <= 0) throw new IllegalArgumentException("bet/raise amount must be positive");
+        if (!requiresAmount && amount != 0) throw new IllegalArgumentException("this action does not accept an amount");
     }
 
     public static PlayerAction fold(String id) { return new PlayerAction(id, ActionType.FOLD, 0); }

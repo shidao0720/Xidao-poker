@@ -3,6 +3,7 @@ package com.xidao.poker.engine.event;
 /** 后端与未来 WebSocket 协议共享的稳定事件名称。 */
 public enum GameEventType {
     PLAYER_JOINED,
+    PLAYER_LEFT,
     READY_CHANGED,
     OWNER_CHANGED,
     GAME_STARTED,

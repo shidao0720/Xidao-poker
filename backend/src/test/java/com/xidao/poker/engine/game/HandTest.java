@@ -7,6 +7,7 @@ import com.xidao.poker.engine.player.Player;
 import com.xidao.poker.engine.player.PlayerStatus;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -23,7 +24,7 @@ class HandTest {
         Player bigBlind = player("C", 2, 1_000);
         Hand hand = new Hand(1, CONFIG, List.of(button, smallBlind, bigBlind), 0, 42L);
 
-        hand.start();
+        List<com.xidao.poker.engine.event.GameEvent> events = hand.start();
 
         assertThat(hand.phase()).isEqualTo(GamePhase.PREFLOP);
         assertThat(hand.smallBlindSeat()).isEqualTo(1);
@@ -35,7 +36,7 @@ class HandTest {
         assertThat(bigBlind.holeCards()).hasSize(2);
         assertThat(smallBlind.stack()).isEqualTo(990);
         assertThat(bigBlind.stack()).isEqualTo(980);
-        assertThat(hand.eventLog()).extracting(e -> e.type())
+        assertThat(events).extracting(e -> e.type())
                 .contains(GameEventType.HAND_STARTED, GameEventType.BLINDS_POSTED, GameEventType.TURN_CHANGED);
     }
 
@@ -72,16 +73,16 @@ class HandTest {
         Player b = player("B", 1, 1_000);
         Player c = player("C", 2, 1_000);
         Hand hand = new Hand(1, CONFIG, List.of(a, b, c), 0, 99L);
-        hand.start();
+        List<com.xidao.poker.engine.event.GameEvent> events = new ArrayList<>(hand.start());
 
-        playPassivelyUntilSettled(hand);
+        events.addAll(playPassivelyUntilSettled(hand));
 
         assertThat(hand.phase()).isEqualTo(GamePhase.ROUND_END);
         assertThat(hand.communityCards()).hasSize(5);
         assertThat(hand.awards()).isNotEmpty();
         assertThat(a.stack() + b.stack() + c.stack()).isEqualTo(3_000);
         assertThat(hand.currentActorSeat()).isNull();
-        assertThat(hand.eventLog()).extracting(e -> e.type())
+        assertThat(events).extracting(e -> e.type())
                 .contains(GameEventType.SHOWDOWN, GameEventType.SETTLEMENT, GameEventType.HAND_ENDED);
     }
 
@@ -199,7 +200,8 @@ class HandTest {
         assertThat(hand.visibleHoleCards("spectator", "B")).hasSize(2);
     }
 
-    private static void playPassivelyUntilSettled(Hand hand) {
+    private static List<com.xidao.poker.engine.event.GameEvent> playPassivelyUntilSettled(Hand hand) {
+        List<com.xidao.poker.engine.event.GameEvent> events = new ArrayList<>();
         int guard = 100;
         while (hand.phase() != GamePhase.ROUND_END && guard-- > 0) {
             Integer actorSeat = hand.currentActorSeat();
@@ -209,14 +211,15 @@ class HandTest {
                     .findFirst().orElseThrow();
             Set<ActionType> legal = hand.legalActions(actor.id());
             if (legal.contains(ActionType.CHECK)) {
-                hand.handle(PlayerAction.check(actor.id()));
+                events.addAll(hand.handle(PlayerAction.check(actor.id())));
             } else if (legal.contains(ActionType.CALL)) {
-                hand.handle(PlayerAction.call(actor.id()));
+                events.addAll(hand.handle(PlayerAction.call(actor.id())));
             } else {
                 throw new AssertionError("passive action unavailable: " + legal);
             }
         }
         assertThat(guard).as("hand must terminate").isPositive();
+        return List.copyOf(events);
     }
 
     private static Player player(String id, int seat, int stack) {

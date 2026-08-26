@@ -6,6 +6,7 @@ import com.xidao.poker.engine.card.Suit;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class HandEvaluatorTest {
 
@@ -156,5 +157,27 @@ class HandEvaluatorTest {
                 new Card[]{c("AD"), c("AH"), c("KD"), c("QD"), c("JD")});
         assertThat(r.category()).isEqualTo(HandCategory.THREE_OF_A_KIND);
         assertThat(r.bestCards()).hasSize(5);
+    }
+
+    @Test
+    void impossibleDuplicateCardsAreRejectedAcrossHoleAndBoard() {
+        assertThatThrownBy(() -> HandEvaluator.bestHand(
+                new Card[]{c("AS"), c("2H")},
+                new Card[]{c("AS"), c("AH"), c("KD"), c("QD"), c("JD")}))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("duplicate");
+    }
+
+    @Test
+    void handResultDoesNotExposeItsMutableBestCardArray() {
+        HandResult result = HandEvaluator.bestHand(
+                new Card[]{c("AS"), c("2H")},
+                new Card[]{c("AD"), c("AH"), c("KD"), c("QD"), c("JD")});
+        Card original = result.bestCards()[0];
+        Card[] external = result.bestCards();
+
+        external[0] = c("2C");
+
+        assertThat(result.bestCards()[0]).isEqualTo(original);
     }
 }

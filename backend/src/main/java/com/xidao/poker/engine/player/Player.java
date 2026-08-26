@@ -68,15 +68,15 @@ public final class Player {
         if (requested < 0) throw new IllegalArgumentException("contribution cannot be negative");
         int paid = Math.min(requested, stack);
         stack -= paid;
-        streetBet += paid;
-        totalContribution += paid;
+        streetBet = Math.addExact(streetBet, paid);
+        totalContribution = Math.addExact(totalContribution, paid);
         if (stack == 0) status = PlayerStatus.ALL_IN;
         return paid;
     }
 
     public void addWinnings(int amount) {
         if (amount < 0) throw new IllegalArgumentException("winnings cannot be negative");
-        stack += amount;
+        stack = Math.addExact(stack, amount);
     }
 
     public void deal(Card card) {

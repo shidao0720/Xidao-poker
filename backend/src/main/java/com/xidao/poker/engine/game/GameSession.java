@@ -6,14 +6,18 @@ import com.xidao.poker.engine.action.PlayerAction;
 import com.xidao.poker.engine.event.GameEvent;
 import com.xidao.poker.engine.event.GameEventType;
 import com.xidao.poker.engine.player.Player;
+import com.xidao.poker.engine.snapshot.ActionOptions;
 import com.xidao.poker.engine.snapshot.GameSnapshot;
 import com.xidao.poker.engine.snapshot.PlayerSnapshot;
 
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Random;
 
 /**
  * 整场房间游戏的聚合根，管理玩家、房主和连续多手牌。
@@ -24,9 +28,8 @@ import java.util.Map;
 public final class GameSession {
     private final String id;
     private final GameConfig config;
-    private final long baseSeed;
+    private final Random shuffleRandom;
     private final Map<String, Player> playersById = new LinkedHashMap<>();
-    private final List<GameEvent> eventLog = new ArrayList<>();
     private String ownerId;
     private Hand currentHand;
     private long handCounter;
@@ -34,12 +37,22 @@ public final class GameSession {
     private Integer lastButtonSeat;
     private boolean gameStarted;
 
-    public GameSession(String id, GameConfig config, long baseSeed) {
+    /** 正式运行入口：使用不可预测随机源洗牌。 */
+    public GameSession(String id, GameConfig config) {
+        this(id, config, new SecureRandom());
+    }
+
+    /** 测试与故障复现入口：相同 seed 和命令序列产生相同牌局。 */
+    public GameSession(String id, GameConfig config, long deterministicSeed) {
+        this(id, config, new Random(deterministicSeed));
+    }
+
+    private GameSession(String id, GameConfig config, Random shuffleRandom) {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("session id is required");
         if (config == null) throw new IllegalArgumentException("game config is required");
         this.id = id;
         this.config = config;
-        this.baseSeed = baseSeed;
+        this.shuffleRandom = Objects.requireNonNull(shuffleRandom, "shuffle random");
     }
 
     public synchronized List<GameEvent> addPlayer(String playerId, String name) {
@@ -49,12 +62,26 @@ public final class GameSession {
         Player player = new Player(playerId, name, seat, config.buyIn());
         if (handInProgress()) player.becomeSpectator();
         playersById.put(playerId, player);
-        if (ownerId == null) ownerId = playerId;
-        return publish(List.of(GameEvent.of(GameEventType.PLAYER_JOINED, currentHandId(), playerId, Map.of(
+        List<GameEvent> raw = new ArrayList<>();
+        raw.add(GameEvent.of(GameEventType.PLAYER_JOINED, currentHandId(), playerId, Map.of(
                 "name", name,
                 "seat", seat,
                 "status", player.status().name()
-        ))));
+        )));
+        if (ownerId == null) {
+            ownerId = playerId;
+        } else {
+            Player currentOwner = playersById.get(ownerId);
+            if (currentOwner != null && currentOwner.isDisconnected()) {
+                String previousOwner = ownerId;
+                ownerId = playerId;
+                raw.add(GameEvent.of(GameEventType.OWNER_CHANGED, currentHandId(), playerId, Map.of(
+                        "previousOwnerId", previousOwner,
+                        "ownerId", playerId
+                )));
+            }
+        }
+        return publish(raw);
     }
 
     public synchronized List<GameEvent> setReady(String playerId, boolean ready) {
@@ -70,7 +97,7 @@ public final class GameSession {
     }
 
     public synchronized List<GameEvent> startGame(String requestedBy) {
-        if (!requestedBy.equals(ownerId)) {
+        if (!Objects.equals(requestedBy, ownerId)) {
             throw new IllegalActionException(ActionErrorCode.INVALID_ACTION, "only the room owner can start");
         }
         if (handInProgress()) {
@@ -88,7 +115,7 @@ public final class GameSession {
         int buttonSeat = nextButtonSeat(eligible);
         lastButtonSeat = buttonSeat;
         handCounter++;
-        currentHand = new Hand(handCounter, config, eligible, buttonSeat, baseSeed + handCounter);
+        currentHand = new Hand(handCounter, config, eligible, buttonSeat, shuffleRandom);
 
         List<GameEvent> raw = new ArrayList<>();
         if (!gameStarted) {
@@ -102,13 +129,27 @@ public final class GameSession {
         return publish(raw);
     }
 
-    public synchronized List<GameEvent> handle(PlayerAction action) {
+    synchronized List<GameEvent> handle(PlayerAction action) {
         requireHandInProgress();
         return publish(currentHand.handle(action));
     }
 
+    /** 网络/application 层必须使用带 handId 与 turnId 的入口，拒绝延迟或重放行动。 */
+    public synchronized List<GameEvent> handle(
+            long expectedHandId,
+            long expectedTurnId,
+            PlayerAction action
+    ) {
+        requireHandInProgress();
+        if (currentHand.id() != expectedHandId) {
+            throw new IllegalActionException(ActionErrorCode.STALE_HAND, "action belongs to an expired hand");
+        }
+        return publish(currentHand.handle(action, expectedTurnId));
+    }
+
     public synchronized List<GameEvent> disconnect(String playerId) {
         Player player = requirePlayer(playerId);
+        if (player.isDisconnected()) return List.of();
         List<GameEvent> raw;
         if (handInProgress() && currentHand.containsPlayer(playerId)) {
             raw = new ArrayList<>(currentHand.disconnect(playerId));
@@ -117,32 +158,55 @@ public final class GameSession {
             raw = new ArrayList<>(List.of(GameEvent.of(
                     GameEventType.PLAYER_DISCONNECTED, currentHandId(), playerId, Map.of("seat", player.seat()))));
         }
-        if (playerId.equals(ownerId)) {
-            String nextOwner = connectedPlayers().stream()
-                    .filter(p -> !p.id().equals(playerId))
-                    .min(Comparator.comparingInt(Player::seat))
-                    .map(Player::id)
-                    .orElse(null);
-            if (nextOwner != null) {
-                ownerId = nextOwner;
-                raw.add(GameEvent.of(GameEventType.OWNER_CHANGED, currentHandId(), nextOwner, Map.of(
-                        "previousOwnerId", playerId,
-                        "ownerId", nextOwner
-                )));
-            }
-        }
+        transferOwnerAfterDisconnect(playerId, raw);
         return publish(raw);
     }
 
     public synchronized List<GameEvent> reconnect(String playerId) {
         Player player = requirePlayer(playerId);
+        if (!player.isDisconnected()) return List.of();
         List<GameEvent> raw;
         if (currentHand != null && currentHand.containsPlayer(playerId) && player.isDisconnected()) {
             raw = currentHand.reconnect(playerId);
         } else {
             player.reconnect();
+            // 已错过当前手的有筹码玩家只能等待下一手，不能显示为本手 ACTIVE。
+            if (handInProgress() && player.stack() > 0) player.becomeSpectator();
             raw = List.of(GameEvent.of(
-                    GameEventType.PLAYER_RECONNECTED, currentHandId(), playerId, Map.of("seat", player.seat())));
+                    GameEventType.PLAYER_RECONNECTED, currentHandId(), playerId, Map.of(
+                            "seat", player.seat(),
+                            "status", player.status().name()
+                    )));
+        }
+        return publish(raw);
+    }
+
+    /** 只能在玩家不属于进行中的 Hand 时真正移除；牌局中离开应先 disconnect。 */
+    public synchronized List<GameEvent> removePlayer(String playerId) {
+        Player player = requirePlayer(playerId);
+        if (handInProgress() && currentHand.containsPlayer(playerId)) {
+            throw new IllegalActionException(
+                    ActionErrorCode.INVALID_PHASE,
+                    "an in-hand player cannot be removed before the hand ends"
+            );
+        }
+        playersById.remove(playerId);
+        List<GameEvent> raw = new ArrayList<>();
+        raw.add(GameEvent.of(GameEventType.PLAYER_LEFT, currentHandId(), playerId, Map.of(
+                "seat", player.seat()
+        )));
+        if (Objects.equals(ownerId, playerId)) {
+            String nextOwner = connectedPlayers().stream()
+                    .min(Comparator.comparingInt(Player::seat))
+                    .map(Player::id)
+                    .orElse(null);
+            ownerId = nextOwner;
+            if (nextOwner != null) {
+                raw.add(GameEvent.of(GameEventType.OWNER_CHANGED, currentHandId(), nextOwner, Map.of(
+                        "previousOwnerId", playerId,
+                        "ownerId", nextOwner
+                )));
+            }
         }
         return publish(raw);
     }
@@ -157,7 +221,10 @@ public final class GameSession {
                         player.seat(),
                         player.stack(),
                         player.streetBet(),
+                        player.totalContribution(),
                         player.status(),
+                        handInProgress() && currentHand.containsPlayer(player.id()) && player.isInHand(),
+                        handInProgress() && currentHand.containsPlayer(player.id()) && player.canAct(),
                         player.ready(),
                         currentHand == null ? List.of() : currentHand.visibleHoleCards(viewerId, player.id())
                 ))
@@ -172,12 +239,14 @@ public final class GameSession {
                 currentHand == null ? null : currentHand.smallBlindSeat(),
                 currentHand == null ? null : currentHand.bigBlindSeat(),
                 currentHand == null ? null : currentHand.currentActorSeat(),
+                currentHand == null ? 0 : currentHand.currentTurnId(),
                 currentHand == null ? 0 : currentHand.currentBet(),
                 currentHand == null ? config.bigBlind() : currentHand.minimumRaise(),
                 currentHand == null ? 0 : currentHand.potAmount(),
+                currentHand == null ? List.of() : currentHand.currentPots(),
                 currentHand == null ? List.of() : currentHand.communityCards(),
                 playerSnapshots,
-                currentHand == null ? java.util.Set.of() : currentHand.legalActions(viewerId),
+                currentHand == null ? ActionOptions.none() : currentHand.actionOptions(viewerId),
                 currentHand == null ? List.of() : currentHand.awards(),
                 sequence
         );
@@ -192,7 +261,6 @@ public final class GameSession {
         List<GameEvent> published = new ArrayList<>(rawEvents.size());
         for (GameEvent raw : rawEvents) {
             GameEvent sequenced = raw.withSequence(++sequence);
-            eventLog.add(sequenced);
             published.add(sequenced);
         }
         return List.copyOf(published);
@@ -208,6 +276,21 @@ public final class GameSession {
 
     private List<Player> connectedPlayers() {
         return playersById.values().stream().filter(p -> !p.isDisconnected()).toList();
+    }
+
+    private void transferOwnerAfterDisconnect(String playerId, List<GameEvent> raw) {
+        if (!Objects.equals(playerId, ownerId)) return;
+        String nextOwner = connectedPlayers().stream()
+                .filter(p -> !p.id().equals(playerId))
+                .min(Comparator.comparingInt(Player::seat))
+                .map(Player::id)
+                .orElse(null);
+        if (nextOwner == null) return;
+        ownerId = nextOwner;
+        raw.add(GameEvent.of(GameEventType.OWNER_CHANGED, currentHandId(), nextOwner, Map.of(
+                "previousOwnerId", playerId,
+                "ownerId", nextOwner
+        )));
     }
 
     private boolean allEligibleReady() {
@@ -236,7 +319,7 @@ public final class GameSession {
         throw new IllegalStateException("room is full");
     }
 
-    private boolean handInProgress() {
+    public synchronized boolean handInProgress() {
         return currentHand != null && currentHand.phase() != GamePhase.ROUND_END;
     }
 
@@ -252,8 +335,36 @@ public final class GameSession {
         return player;
     }
 
-    private long currentHandId() {
+    public synchronized long currentHandId() {
         return currentHand == null ? 0 : currentHand.id();
+    }
+
+    public synchronized long currentTurnId() {
+        return currentHand == null ? 0 : currentHand.currentTurnId();
+    }
+
+    public synchronized String currentActorPlayerId() {
+        return currentHand == null ? null : currentHand.currentActorPlayerId();
+    }
+
+    public synchronized boolean containsPlayer(String playerId) {
+        return playersById.containsKey(playerId);
+    }
+
+    public synchronized boolean isPlayerDisconnected(String playerId) {
+        return requirePlayer(playerId).isDisconnected();
+    }
+
+    public synchronized boolean isCurrentHandParticipant(String playerId) {
+        return currentHand != null && currentHand.containsPlayer(playerId);
+    }
+
+    public synchronized int playerCount() {
+        return playersById.size();
+    }
+
+    public synchronized long lastSequence() {
+        return sequence;
     }
 
     public String id() { return id; }
@@ -262,5 +373,4 @@ public final class GameSession {
     // 仅供同包引擎测试与诊断使用，避免应用层绕过 Session 锁直接修改聚合内部对象。
     synchronized Hand currentHand() { return currentHand; }
     synchronized List<Player> players() { return List.copyOf(playersById.values()); }
-    public synchronized List<GameEvent> eventLog() { return List.copyOf(eventLog); }
 }

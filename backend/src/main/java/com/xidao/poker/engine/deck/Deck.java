@@ -7,6 +7,7 @@ import com.xidao.poker.engine.card.Suit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Random;
 
 /**
@@ -25,7 +26,7 @@ public final class Deck {
 
     public Deck(Random rng) {
         this.cards = build();
-        Collections.shuffle(this.cards, rng);
+        Collections.shuffle(this.cards, Objects.requireNonNull(rng, "random source"));
     }
 
     private static List<Card> build() {
@@ -48,6 +49,8 @@ public final class Deck {
 
     /** 连续抽 n 张。 */
     public Card[] draw(int n) {
+        if (n < 0) throw new IllegalArgumentException("draw count cannot be negative");
+        if (n > remaining()) throw new IllegalStateException("not enough cards remaining");
         Card[] out = new Card[n];
         for (int i = 0; i < n; i++) {
             out[i] = draw();

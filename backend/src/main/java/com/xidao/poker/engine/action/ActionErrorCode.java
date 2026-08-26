@@ -6,5 +6,7 @@ public enum ActionErrorCode {
     INVALID_ACTION,
     INVALID_AMOUNT,
     INSUFFICIENT_CHIPS,
-    UNKNOWN_PLAYER
+    UNKNOWN_PLAYER,
+    STALE_HAND,
+    STALE_TURN
 }

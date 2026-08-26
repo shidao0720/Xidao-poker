@@ -4,7 +4,7 @@
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：核心游戏引擎阶段。`GameSession` / `Hand` 显式状态机、最多 10 人行动轮转、盲注、发牌、四轮下注、自动摊牌、底池结算、破产淘汰、断线防卡局、查看者过滤快照和有序事件已经实现并通过测试；网络层、持久化和前端仍在开发中。
+> 当前状态：核心游戏引擎与房间应用层阶段。`GameSession` / `Hand` 显式状态机、最多 10 人行动轮转、盲注、发牌、四轮下注、自动摊牌、严格边池结算、破产淘汰和断线防卡局已经实现；`RoomRuntime`、应用服务、有界事件回放、连接代次、命令幂等与定向重连快照也已落地。当前后端共有 84 项测试通过；Spring HTTP / WebSocket 适配器、持久化和前端仍在开发中。
 
 ## 目标游戏流程
 
@@ -71,23 +71,27 @@ React Client
 Spring Controller / WebSocket Handler
              │
              ▼
-Application Service
-  房间管理、会话映射、锁、广播、持久化调度
+RoomService / GameApplicationService
+  用例入口、连接身份、命令日志、错误边界
+             │
+             ▼
+RoomRuntime / RoomEventDispatcher
+  房间级原子锁、连接代次、有限缓存、有序异步发送
              │
              ▼
 Game Engine（纯 Java）
   GameSession → Hand → BettingRound / PotManager / HandEvaluator
-             │
-             ▼
-Repository / Persistence
-  PostgreSQL：历史数据
-  Memory：实时牌局状态
+
+Application Service ─────→ Repository / Persistence
+                           PostgreSQL：已结束的历史数据
+RoomRuntime ──────────────→ Memory：实时牌局状态
 ```
 
 后端遵循以下依赖方向：
 
 ```text
-Controller → Service → Game Engine → Repository abstraction
+Controller / WsHandler → Application Service → RoomRuntime → Game Engine
+                                      └──────→ Repository abstraction
 ```
 
 游戏引擎不依赖 Spring、WebSocket、数据库或前端协议，可以直接通过 JUnit 驱动。
@@ -124,17 +128,19 @@ Controller → Service → Game Engine → Repository abstraction
 
 第一版优先保证单服务实例下的正确性。Redis 后期可用于房间目录、在线状态和临时会话缓存，但不会成为游戏引擎的真实状态源。
 
-### 3. 先使用房间级锁，后续再评估 Room Actor / Room Thread
+### 3. 房间级原子锁 + 共享发送执行器
 
-每个房间的状态修改通过独立锁串行化，避免两个 WebSocket 行动同时改变同一牌局。对于最多 10 人、以人工操作为主的局域网牌局，锁的吞吐量足够，并且实现与调试成本更低。
+每个 `RoomRuntime` 通过独立公平锁串行提交同一房间的命令，避免两个 WebSocket 行动同时改变一副牌。实际网络发送离开房间锁后执行，并由共享 Executor 为每个房间维持单一 drain loop，确保消息顺序。
 
-独立房间执行器或 Actor 模型具有更清晰的消息顺序，但会增加线程生命周期、队列积压、关闭和异常恢复复杂度。只有在性能测试证明锁模型成为瓶颈后才升级。
+这个设计保留了 Actor 模型最重要的“单房间顺序”，但不为每个房间永久占用线程。代价是需要显式处理 outbox 积压、发送失败和锁外 I/O；当前通过有界 outbox 与完整快照降级处理。只有在压力测试证明锁竞争成为瓶颈后，才考虑专用 Actor 框架。
 
-### 4. Event Log 优先于完整 Event Sourcing
+房间关闭与加入共用同一把生命周期锁。目录只会在成员、待移除玩家、outbox 和发送 drain 都清空后删除房间；一旦关闭标记提交，后续加入会被拒绝，从而避免“目录已删除但玩家又加入旧实例”的孤儿房间竞态。
 
-游戏引擎以命令式方式更新当前状态，同时产生不可变的事件日志用于广播、调试和保存历史记录。
+### 4. 命令级事件 + 有界回放，而不是无限 Event Log
 
-第一版不会仅靠事件回放重建全部牌局状态。完整 Event Sourcing 有利于审计和恢复，但会显著增加事件版本兼容、重放、快照和迁移成本。当前采用 Event Log，可以保留可观察性，同时降低实现风险。
+游戏引擎以命令式方式更新当前状态，每个命令只返回本次产生的不可变事件。`GameSession` 与 `Hand` 不保存不断增长的事件历史，避免长时间运行导致内存持续上涨。
+
+应用层默认只保留最近 512 个事件用于短暂补发，客户端序号早于缓存窗口时必须请求完整 Snapshot。命令去重缓存默认 1,024 条，发送 outbox 默认 1,024 条；达到上限时丢弃旧增量并为每位在线玩家生成当前快照。第一版不会仅靠事件回放重建全部牌局；长期审计日志将在每手结束后异步持久化。
 
 ### 5. Game Session 与 Hand 生命周期分离
 
@@ -166,7 +172,7 @@ ACTIVE / FOLDED / ALL_IN / DISCONNECTED / SPECTATOR / BUSTED
 - 当前手因掉线弃牌后，即使马上重连，也只恢复观看，不重新进入该手行动队列
 - 席位和筹码继续保留，下一手是否参与由连接、筹码和准备状态重新筛选
 
-第一版引擎采用立即让掉线的可行动玩家退出当前手的确定性语义。应用层后续可以在调用引擎前增加断线宽限计时，但计时器不能让 `currentActor` 永久停留在离线玩家身上。
+第一版引擎采用立即让掉线的可行动玩家退出当前手、但应用层继续保留座位的确定性语义。`RoomRuntime` 提供带连接代次的宽限期到期入口：旧连接的关闭事件和旧 epoch 定时任务都会被忽略；Spring WebSocket 层接入时负责安排默认 30 秒的共享定时任务。无论宽限期是否结束，`currentActor` 都不会停留在离线玩家身上。
 
 ### 7. 行动指针采用防卡局硬约束
 
@@ -194,6 +200,25 @@ currentActor != null  →  currentActor.canAct() == true
 - Event：正常游戏过程中应用实时增量事件
 
 每个事件将带有单调递增序号。客户端发现序号不连续时应请求新快照，而不是猜测缺失状态。收到快照时必须 replace state，不能与旧状态盲目 merge。
+
+重连在同一个房间原子操作中完成三件事：校验客户端持有的旧连接 epoch、替换连接 ID、递增 epoch，并生成该玩家专属快照加入定向 outbox。每个 Snapshot delivery 都绑定目标 `playerId + connectionId + connectionEpoch`；发送适配器只能投递到完全匹配的当前连接，排队期间已经失效的旧连接快照必须丢弃。命令确认只允许携带发起者自己的快照，绝不会包含“所有玩家各自的私有快照”。如果增量广播失败，发送器会自动为所有在线玩家排入隐私过滤后的恢复快照。
+
+### 10. 网络命令的幂等与防重放
+
+客户端命令信封必须携带：
+
+```text
+commandId + playerId（由连接绑定，不信任消息体）
+connectionId + connectionEpoch
+handId + turnId（行动命令）
+```
+
+- `commandId` 防止同一请求因重试重复扣筹码。
+- `connectionId + epoch` 拒绝被刷新页面替换的旧 Socket。
+- `handId + turnId` 即使在命令缓存淘汰后，也能拒绝延迟到下一回合或下一手的行动。
+- 开始游戏命令绑定客户端看到的上一手 ID，防止延迟的 `START_GAME` 意外开启后续牌局。
+
+服务端 Snapshot 直接给当前行动者提供 `toCall`、实际 `callAmount`、最小 Bet/Raise-to 和最大可下注额；前端不得自行推导这些规则。
 
 ## 规则实现中的重要取舍
 
@@ -235,6 +260,8 @@ ERROR
 }
 ```
 
+异常到 `ERROR` 消息的转换属于未来 WebSocket 适配器职责；应用层会记录稳定错误码并保持房间进程可继续处理后续命令。
+
 ## 调试策略
 
 ### 结构化日志
@@ -251,6 +278,8 @@ timestamp level module roomId gameId handId playerId event
 - Game Engine：`ACTION_RECEIVED`、`ACTION_ACCEPTED`、`ACTION_REJECTED`
 - State Machine：`STATE_CHANGED`、`HAND_STARTED`、`HAND_SETTLED`
 - Validation：`NOT_YOUR_TURN`、`INVALID_AMOUNT`、`INSUFFICIENT_CHIPS`
+
+当前 `GameApplicationService` 已统一记录 `ROOM_COMMAND_RECEIVED`、`ROOM_COMMAND_COMMITTED`、`ROOM_COMMAND_REJECTED` 及最终事件序号；`RoomEventDispatcher` 会记录发送失败并触发 Snapshot 恢复。未来 WebSocket 适配器还需补齐连接和原始协议消息的日志。
 
 日志不能包含其他玩家尚未公开的手牌。服务端内部如需调试手牌，只能在开发环境受控输出。
 
@@ -269,7 +298,7 @@ timestamp level module roomId gameId handId playerId event
 
 ### 确定性复现
 
-牌组支持注入随机种子。记录 seed、初始玩家状态和行动日志后，可以在测试环境重放问题牌局。随机种子只用于测试和问题复现；正式牌局应使用安全且不可预测的洗牌来源。
+牌组支持注入随机种子。记录 seed、初始玩家状态和行动日志后，可以在测试环境重放问题牌局。显式 seed 入口只保留给测试和问题复现；正式建房入口已使用 `SecureRandom`，且不会向 Controller 暴露 seed 参数。
 
 ## 测试策略
 
@@ -289,6 +318,7 @@ Correctness → State Consistency → Debuggability → Features
 - State Machine：合法转换与非法阶段操作
 - Player Lifecycle：Disconnect、Reconnect、Busted、Spectator
 - Invariants：观察者、破产、弃牌、All-in 和离线玩家永远不会成为当前行动者
+- Application：连接 ID / epoch、防重复命令、过期 hand/turn、有限回放缓存、outbox 降级与定向快照隐私
 
 ### 流程测试
 
@@ -312,6 +342,7 @@ Correctness → State Consistency → Debuggability → Features
 - 筹码不足
 - WebSocket 短暂断线与 30 秒内重连
 - 客户端事件序号缺失后重新请求 Snapshot
+- 事件广播失败后自动回落为 viewer-specific Snapshot
 - PostgreSQL 暂时不可用时，进行中的牌局不被中断
 
 ### 运行测试
@@ -321,7 +352,7 @@ cd backend
 mvn test
 ```
 
-当前基线：54 个游戏引擎测试通过，0 failures / 0 errors。该数字会随开发持续增长，以 CI 的实际结果为准。
+当前基线：84 个后端单元与流程测试通过，0 failures / 0 errors。该数字会随开发持续增长，以 CI 的实际结果为准。
 
 ## Git 工作流
 
@@ -437,6 +468,9 @@ Xidao-poker/
 │   ├── pom.xml
 │   └── src/
 │       ├── main/java/com/xidao/poker/
+│       │   ├── application/
+│       │   │   ├── command/
+│       │   │   └── room/
 │       │   └── engine/
 │       │       ├── action/
 │       │       ├── card/
@@ -448,7 +482,9 @@ Xidao-poker/
 │       │       ├── pot/
 │       │       ├── snapshot/
 │       │       └── table/
-│       └── test/java/com/xidao/poker/engine/
+│       └── test/java/com/xidao/poker/
+│           ├── application/room/
+│           └── engine/
 ├── frontend/                  # 计划
 └── README.md
 ```
@@ -464,12 +500,14 @@ Xidao-poker/
 - [x] `GameSession` 与 `Hand` 核心状态机
 - [x] 查看者过滤 Snapshot、单调递增 Event 与房主转移底层逻辑
 - [x] 观察者 / 破产 / 掉线玩家防卡局约束
-- [ ] 房间应用服务与大厅管理
+- [x] `RoomRuntime`、房间目录与大厅应用服务基础
+- [x] 有界事件回放、命令幂等、连接代次与异步定向 outbox
 - [ ] Spring HTTP API
 - [ ] WebSocket 协议与实时广播
 - [ ] PostgreSQL 历史数据持久化
 - [ ] React 大厅、房间和牌桌界面
-- [ ] 断线重连与观战流程
+- [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
+- [ ] WebSocket 30 秒宽限调度与多浏览器重连联调
 - [ ] 多浏览器 10 人局域网联调
 - [x] Backend Maven Test CI（前端模块不存在时自动跳过）
 - [ ] 容器化与首个 GitHub Release

@@ -6,6 +6,7 @@ import com.xidao.poker.engine.card.Suit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 手牌评估器：把任意 5 张牌数值化为一个可比较大小的 {@code long} key，
@@ -21,9 +22,7 @@ public final class HandEvaluator {
 
     /** 评估 5 张牌，返回数值化 key。 */
     public static long evaluate5(Card[] cards) {
-        if (cards == null || cards.length != 5) {
-            throw new IllegalArgumentException("exactly 5 cards required");
-        }
+        validateCards(cards, 5, "five-card hand");
 
         // rank 降序
         int[] r = new int[5];
@@ -101,9 +100,7 @@ public final class HandEvaluator {
 
     /** 从 7 张牌中选出最佳 5 张，返回数值化 key。 */
     public static long evaluate7(Card[] seven) {
-        if (seven == null || seven.length != 7) {
-            throw new IllegalArgumentException("exactly 7 cards required");
-        }
+        validateCards(seven, 7, "seven-card hand");
         long best = Long.MIN_VALUE;
         Card[] five = new Card[5];
         for (int mask = 0; mask < (1 << 7); mask++) {
@@ -128,15 +125,12 @@ public final class HandEvaluator {
      * 评估「2 手牌 + 5 公共牌」，返回最佳 5 张组合及牌型。
      */
     public static HandResult bestHand(Card[] hole, Card[] community) {
-        if (hole == null || hole.length != 2) {
-            throw new IllegalArgumentException("exactly 2 hole cards required");
-        }
-        if (community == null || community.length != 5) {
-            throw new IllegalArgumentException("exactly 5 community cards required");
-        }
+        validateCards(hole, 2, "hole cards");
+        validateCards(community, 5, "community cards");
         Card[] seven = new Card[7];
         System.arraycopy(hole, 0, seven, 0, 2);
         System.arraycopy(community, 0, seven, 2, 5);
+        validateCards(seven, 7, "combined cards");
 
         long best = Long.MIN_VALUE;
         int bestMask = 0;
@@ -197,5 +191,15 @@ public final class HandEvaluator {
             tie = (tie << 4) | (t & 0xF);
         }
         return ((long) c.rank << 20) | tie;
+    }
+
+    private static void validateCards(Card[] cards, int expected, String field) {
+        if (cards == null || cards.length != expected) {
+            throw new IllegalArgumentException(field + " must contain exactly " + expected + " cards");
+        }
+        for (Card card : cards) Objects.requireNonNull(card, field + " cannot contain null");
+        if (Arrays.stream(cards).distinct().count() != cards.length) {
+            throw new IllegalArgumentException(field + " cannot contain duplicate cards");
+        }
     }
 }

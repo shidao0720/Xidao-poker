@@ -11,7 +11,10 @@ public record PlayerSnapshot(
         int seat,
         int stack,
         int streetBet,
+        int totalContribution,
         PlayerStatus status,
+        boolean inHand,
+        boolean canAct,
         boolean ready,
         List<Card> holeCards
 ) {
