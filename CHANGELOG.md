@@ -51,6 +51,7 @@
 - 添加查看者安全的手牌 / 公共牌显示、服务端驱动行动栏、下注范围输入和观战状态提示。
 - 添加原生 WebSocket 客户端，支持 token / epoch 会话级保存、自动重连、心跳、事件序号检测、有限回放和 Snapshot 恢复。
 - 添加前端 Snapshot 整体替换、增量投影、序号缺口及观察者防卡局测试。
+- 添加与主 React 程序隔离的前端视觉实验室，提供四套蓝色主题、`Fate stay poker` 透明 Logo 以及四种可切换的大厅扑克电波背景。
 - 添加适用于 Java、Maven、Node、Vite、IDE、日志和本地密钥的 `.gitignore`。
 - 添加 `.gitattributes`，统一跨平台文本行尾并标记常见二进制资源。
 

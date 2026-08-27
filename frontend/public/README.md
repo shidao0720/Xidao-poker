@@ -36,4 +36,5 @@ assets/
 
 | 路径 | 用途 | 来源/作者 | 许可证 |
 | --- | --- | --- | --- |
-| 暂无 | - | - | - |
+| `assets/images/ui/fate-stay-poker-logo.png` | B 主题标题 Logo | shidao0720 提供 | 项目自有素材 |
+| `assets/images/ui/fate-stay-poker-logo-source.png` | Logo 原始黑底源文件 | shidao0720 提供 | 项目自有素材 |
