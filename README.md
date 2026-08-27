@@ -4,7 +4,7 @@
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：核心游戏引擎与房间应用层阶段。`GameSession` / `Hand` 显式状态机、最多 10 人行动轮转、盲注、发牌、四轮下注、自动摊牌、严格边池结算、破产淘汰和断线防卡局已经实现；`RoomRuntime`、应用服务、有界事件回放、连接代次、命令幂等与定向重连快照也已落地。当前后端共有 84 项测试通过；Spring HTTP / WebSocket 适配器、持久化和前端仍在开发中。
+> 当前状态：后端核心流程阶段。游戏引擎、`RoomRuntime` 应用层、Spring HTTP 大厅 API、原生 WebSocket 协议、实时广播、连接代次、重连令牌和 30 秒断线宽限均已落地。当前后端共有 102 项测试通过；PostgreSQL 历史持久化、React 前端和真实多浏览器联调仍在开发中。
 
 ## 目标游戏流程
 
@@ -64,8 +64,8 @@ Redis 被视为后期优化项，不是第一版核心依赖。
 ```text
 React Client
     │
-    ├── HTTP：身份、房间列表、创建/加入房间
-    └── WebSocket：玩家意图、实时事件、状态快照
+    ├── HTTP：房间列表、创建与空房删除
+    └── WebSocket：加入/重连、玩家意图、实时事件、状态快照
              │
              ▼
 Spring Controller / WebSocket Handler
@@ -172,7 +172,7 @@ ACTIVE / FOLDED / ALL_IN / DISCONNECTED / SPECTATOR / BUSTED
 - 当前手因掉线弃牌后，即使马上重连，也只恢复观看，不重新进入该手行动队列
 - 席位和筹码继续保留，下一手是否参与由连接、筹码和准备状态重新筛选
 
-第一版引擎采用立即让掉线的可行动玩家退出当前手、但应用层继续保留座位的确定性语义。`RoomRuntime` 提供带连接代次的宽限期到期入口：旧连接的关闭事件和旧 epoch 定时任务都会被忽略；Spring WebSocket 层接入时负责安排默认 30 秒的共享定时任务。无论宽限期是否结束，`currentActor` 都不会停留在离线玩家身上。
+第一版引擎采用立即让掉线的可行动玩家退出当前手、但应用层继续保留座位的确定性语义。Spring WebSocket 层已实现默认 30 秒的共享断线定时器；旧连接的关闭事件和旧 epoch 定时任务都会被忽略。无论宽限期是否结束，`currentActor` 都不会停留在离线玩家身上。
 
 ### 7. 行动指针采用防卡局硬约束
 
@@ -232,35 +232,78 @@ handId + turnId（行动命令）
 - 平分底池产生的奇数筹码，从 Button 左侧第一个获胜玩家开始顺时针分配，以保证结果确定。
 - 观察者不能查看未公开手牌；只显示查看者自己的手牌和 Showdown 后实际摊牌玩家的手牌。
 
-## WebSocket 协议原则
+## HTTP 与 WebSocket 协议
 
-协议事件名称由前后端共享定义，避免双方为同一事件使用不同名称。计划中的核心事件包括：
+大厅 HTTP API：
 
-```text
-GAME_STARTED
-HAND_STARTED
-TURN_CHANGED
-ACTION_REQUEST
-PLAYER_ACTION
-COMMUNITY_CARD_UPDATED
-SHOWDOWN
-SETTLEMENT
-ROOM_SNAPSHOT
-OWNER_CHANGED
-ERROR
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/rooms` | 获取房间列表和盲注、买入、人数状态 |
+| `POST` | `/api/rooms` | 创建房间；服务端生成 `roomId` |
+| `DELETE` | `/api/rooms/{roomId}` | 删除没有成员、outbox 或发送任务的空房间 |
+
+创建房间请求示例：
+
+```json
+{
+  "roomName": "Friday LAN",
+  "smallBlind": 5,
+  "bigBlind": 10,
+  "buyIn": 1000,
+  "maxPlayers": 10
+}
 ```
 
-非法行动不得导致连接异常或部分状态修改。服务端返回稳定错误码，例如：
+WebSocket 入口为 `/ws/poker`。首次加入使用：
+
+```text
+ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&playerName=<url-encoded-name>
+```
+
+服务端会定向返回 `CONNECTION_READY` 和 `ROOM_SNAPSHOT`；客户端保存其中的 `connectionEpoch` 与 `resumeToken`。重连时使用：
+
+```text
+ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&connectionEpoch=<epoch>&resumeToken=<token>
+```
+
+成功重连会递增 epoch、轮换 token、关闭旧 Socket，并主动推送新的查看者专属 Snapshot。token 只存在于网络适配层，不进入 Engine 或日志；旧 token、旧 epoch、旧连接发送的消息都会被拒绝。
+
+该 token 只是局域网版本的“重连持有证明”，不是完整账号认证。若未来开放到互联网，必须在它之前增加登录鉴权、TLS、速率限制和更严格的 Origin 白名单。
+
+客户端消息统一使用：
+
+```json
+{
+  "type": "PLAYER_ACTION",
+  "commandId": "client-generated-uuid",
+  "payload": {
+    "handId": 12,
+    "turnId": 38,
+    "action": "RAISE",
+    "amount": 200
+  }
+}
+```
+
+已实现的客户端消息为 `READY`、`START_GAME`、`PLAYER_ACTION`、`REQUEST_SNAPSHOT`、`REPLAY_EVENTS`、`LEAVE` 和 `PING`。`roomId`、`playerId`、`connectionId` 与 epoch 全部取自握手绑定，消息体不能覆盖身份。
+
+服务端直接使用稳定的 `GameEventType` 作为事件名称，并额外提供 `CONNECTION_READY`、`COMMAND_RESULT`、`ROOM_SNAPSHOT`、`EVENT_REPLAY`、`ERROR` 和 `PONG`。当前行动者的合法操作与金额边界通过 Snapshot 内的 `actionOptions` 提供，不存在由前端自行计算的 `ACTION_REQUEST` 状态源。
+
+非法行动不会造成连接异常或部分状态修改。错误消息使用稳定 code，展示文案则允许后续调整：
 
 ```json
 {
   "type": "ERROR",
-  "code": "INVALID_AMOUNT",
-  "message": "Raise amount is below the minimum"
+  "roomId": "room-id",
+  "commandId": "client-generated-uuid",
+  "payload": {
+    "code": "INVALID_AMOUNT",
+    "message": "raise amount is below the minimum"
+  }
 }
 ```
 
-异常到 `ERROR` 消息的转换属于未来 WebSocket 适配器职责；应用层会记录稳定错误码并保持房间进程可继续处理后续命令。
+默认只接受同源 WebSocket。Vite 或 LAN 跨源开发必须在 `poker.network.allowed-origin-patterns` 中显式列出可信 Origin，不建议配置为 `*`。
 
 ## 调试策略
 
@@ -279,7 +322,7 @@ timestamp level module roomId gameId handId playerId event
 - State Machine：`STATE_CHANGED`、`HAND_STARTED`、`HAND_SETTLED`
 - Validation：`NOT_YOUR_TURN`、`INVALID_AMOUNT`、`INSUFFICIENT_CHIPS`
 
-当前 `GameApplicationService` 已统一记录 `ROOM_COMMAND_RECEIVED`、`ROOM_COMMAND_COMMITTED`、`ROOM_COMMAND_REJECTED` 及最终事件序号；`RoomEventDispatcher` 会记录发送失败并触发 Snapshot 恢复。未来 WebSocket 适配器还需补齐连接和原始协议消息的日志。
+`GameApplicationService` 统一记录 `ROOM_COMMAND_RECEIVED`、`ROOM_COMMAND_COMMITTED`、`ROOM_COMMAND_REJECTED` 及最终事件序号；WebSocket 层记录 `WS_CONNECT`、`WS_DISCONNECT`、`WS_MESSAGE_RECEIVED`、`WS_MESSAGE_SENT` 和拒绝原因。`RoomEventDispatcher` 会记录发送失败并触发 Snapshot 恢复。
 
 日志不能包含其他玩家尚未公开的手牌。服务端内部如需调试手牌，只能在开发环境受控输出。
 
@@ -352,7 +395,7 @@ cd backend
 mvn test
 ```
 
-当前基线：84 个后端单元与流程测试通过，0 failures / 0 errors。该数字会随开发持续增长，以 CI 的实际结果为准。
+当前基线：102 个后端单元、适配层集成与流程测试通过，0 failures / 0 errors。该数字会随开发持续增长，以 CI 的实际结果为准。
 
 ## Git 工作流
 
@@ -458,7 +501,14 @@ cd backend
 mvn test
 ```
 
-Spring Boot、PostgreSQL 和前端的完整启动命令将在对应模块可运行后补充，避免 README 提供尚不可用的命令。
+启动当前后端：
+
+```bash
+cd backend
+mvn spring-boot:run
+```
+
+默认 HTTP 地址为 `http://localhost:8080/api/rooms`，WebSocket 地址为 `ws://localhost:8080/ws/poker`。历史持久化尚未接入，因此当前阶段显式关闭了数据库自动配置，启动服务不要求本机安装 PostgreSQL；持久化模块实现时会重新启用。
 
 ## 目录结构（当前与规划）
 
@@ -471,20 +521,27 @@ Xidao-poker/
 │       │   ├── application/
 │       │   │   ├── command/
 │       │   │   └── room/
-│       │   └── engine/
-│       │       ├── action/
-│       │       ├── card/
-│       │       ├── deck/
-│       │       ├── eval/
-│       │       ├── event/
-│       │       ├── game/
-│       │       ├── player/
-│       │       ├── pot/
-│       │       ├── snapshot/
-│       │       └── table/
+│       │   ├── config/
+│       │   ├── engine/
+│       │   │   ├── action/
+│       │   │   ├── card/
+│       │   │   ├── deck/
+│       │   │   ├── eval/
+│       │   │   ├── event/
+│       │   │   ├── game/
+│       │   │   ├── player/
+│       │   │   ├── pot/
+│       │   │   ├── snapshot/
+│       │   │   └── table/
+│       │   └── web/
+│       │       ├── api/
+│       │       ├── protocol/
+│       │       └── ws/
+│       ├── main/resources/application.yml
 │       └── test/java/com/xidao/poker/
 │           ├── application/room/
-│           └── engine/
+│           ├── engine/
+│           └── web/
 ├── frontend/                  # 计划
 └── README.md
 ```
@@ -502,12 +559,13 @@ Xidao-poker/
 - [x] 观察者 / 破产 / 掉线玩家防卡局约束
 - [x] `RoomRuntime`、房间目录与大厅应用服务基础
 - [x] 有界事件回放、命令幂等、连接代次与异步定向 outbox
-- [ ] Spring HTTP API
-- [ ] WebSocket 协议与实时广播
+- [x] Spring HTTP 大厅 API
+- [x] WebSocket 协议、身份绑定与实时广播
 - [ ] PostgreSQL 历史数据持久化
 - [ ] React 大厅、房间和牌桌界面
 - [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
-- [ ] WebSocket 30 秒宽限调度与多浏览器重连联调
+- [x] WebSocket 30 秒宽限调度与 token / epoch 安全重连
+- [ ] 多浏览器重连联调
 - [ ] 多浏览器 10 人局域网联调
 - [x] Backend Maven Test CI（前端模块不存在时自动跳过）
 - [ ] 容器化与首个 GitHub Release

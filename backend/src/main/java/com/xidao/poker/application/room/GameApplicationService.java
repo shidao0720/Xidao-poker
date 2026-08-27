@@ -159,7 +159,8 @@ public final class GameApplicationService {
         } catch (RuntimeException error) {
             log.error("ROOM_DELIVERY_SIGNAL_FAILED roomId={} playerId={} commandId={} operation={} sequence={}",
                     roomId, playerId, commandId, operation, result.lastSequence(), error);
-            throw error;
+            // 房间状态已经提交，不能把发送器调度失败伪装成命令失败。
+            // outbox 保留未发送内容，后续命令或恢复流程可以再次 signal。
         }
         return result;
     }
@@ -176,7 +177,7 @@ public final class GameApplicationService {
         } catch (RuntimeException error) {
             log.error("ROOM_DELIVERY_SIGNAL_FAILED roomId={} playerId={} operation={}",
                     roomId, playerId, operation, error);
-            throw error;
+            // 查询已经生成并排入了权威快照；发送调度失败不改变查询结果。
         }
         return result;
     }

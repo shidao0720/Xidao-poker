@@ -467,9 +467,13 @@ public final class RoomRuntime {
             return new RoomSummary(
                     metadata.roomId(),
                     metadata.roomName(),
+                    metadata.createdAt(),
                     gameSession.phase(),
                     gameSession.playerCount(),
                     connected,
+                    gameSession.config().smallBlind(),
+                    gameSession.config().bigBlind(),
+                    gameSession.config().buyIn(),
                     gameSession.config().maxPlayers()
             );
         } finally {

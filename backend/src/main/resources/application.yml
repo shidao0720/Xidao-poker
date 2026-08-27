@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: xidao-poker
+
+poker:
+  network:
+    disconnect-grace: 30s
+    maximum-text-message-bytes: 16384
+    send-time-limit-millis: 10000
+    send-buffer-bytes: 1048576
+    # 留空表示 Spring 默认的同源策略；Vite/LAN 跨源联调时显式配置可信 Origin。
+    allowed-origin-patterns: []
