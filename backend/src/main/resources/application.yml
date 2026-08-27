@@ -6,6 +6,9 @@ spring:
     enabled: false
 
 poker:
+  room:
+    empty-ttl: 20s
+    cleanup-interval: 1s
   persistence:
     enabled: false
     writer-threads: 2

@@ -43,9 +43,10 @@ export function ActionBar({ snapshot, playerId, onAction }: ActionBarProps) {
       </div>
       {aggressiveAction && minimum !== null && options.maximumTo >= minimum && (
         <div className="raise-control">
-          <label htmlFor="raise-amount">{actionLabels[aggressiveAction]}到</label>
+          <label htmlFor="raise-amount-slider">{actionLabels[aggressiveAction]}到</label>
           <input
-            id="raise-amount"
+            id="raise-amount-slider"
+            name="raiseAmountSlider"
             type="range"
             min={minimum}
             max={options.maximumTo}
@@ -53,6 +54,8 @@ export function ActionBar({ snapshot, playerId, onAction }: ActionBarProps) {
             onChange={(event) => setAmount(Number(event.target.value))}
           />
           <input
+            id="raise-amount-input"
+            name="raiseAmount"
             aria-label="下注金额"
             className="amount-input"
             type="number"
@@ -71,7 +74,7 @@ export function ActionBar({ snapshot, playerId, onAction }: ActionBarProps) {
           <button
             className={`action-button action-${action.toLowerCase()}`}
             key={action}
-            onClick={() => onAction(action, action === 'CALL' ? options.callAmount : 0)}
+            onClick={() => onAction(action, 0)}
           >
             {actionLabels[action]}
             {action === 'CALL' && options.callAmount > 0 && <small>{options.callAmount.toLocaleString()}</small>}

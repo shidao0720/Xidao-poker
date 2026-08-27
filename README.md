@@ -198,6 +198,8 @@ ACTIVE / FOLDED / ALL_IN / DISCONNECTED / SPECTATOR / BUSTED
 
 第一版引擎采用立即让掉线的可行动玩家退出当前手、但应用层继续保留座位的确定性语义。Spring WebSocket 层已实现默认 30 秒的共享断线定时器；旧连接的关闭事件和旧 epoch 定时任务都会被忽略。无论宽限期是否结束，`currentActor` 都不会停留在离线玩家身上。
 
+房间的真实成员数变为 0 后会记录空置起点，默认满 20 秒后由共享清理任务从大厅目录删除。20 秒内重新加入会重置该期限；清理时仍会在房间锁内复查成员、待移除玩家、出站队列和发送任务，避免与并发加入或尚未完成的离开广播竞态。普通断线仍先执行 30 秒重连保护，只有成员在宽限期后真正移除，才开始计算空房间 TTL。期限与扫描间隔可通过 `poker.room.empty-ttl` 和 `poker.room.cleanup-interval` 配置。
+
 ### 7. 行动指针采用防卡局硬约束
 
 底层状态机始终维护以下不变量：
@@ -329,7 +331,7 @@ ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&connectionEpoch
 }
 ```
 
-默认只接受同源 WebSocket。Vite 或 LAN 跨源开发必须在 `poker.network.allowed-origin-patterns` 中显式列出可信 Origin，不建议配置为 `*`。
+默认只接受同源 WebSocket。仓库自带的 Vite `/ws` 代理会在升级请求中把 Origin 重写为后端的 HTTP Origin，因此通过 Vite 进行 localhost / LAN 开发无需放宽白名单；只有浏览器绕过 Vite、直接跨源连接后端时，才必须在 `poker.network.allowed-origin-patterns` 中显式列出可信 Origin，不建议配置为 `*`。
 
 ## 调试策略
 
@@ -416,6 +418,7 @@ Correctness → State Consistency → Debuggability → Features
 - 非法 Raise 金额
 - 筹码不足
 - WebSocket 短暂断线与 30 秒内重连
+- 空房间满 20 秒批量清理、期限前不删除及重新加入后旧期限失效
 - 客户端事件序号缺失后重新请求 Snapshot
 - 事件广播失败后自动回落为 viewer-specific Snapshot
 - PostgreSQL 暂时不可用时，进行中的牌局不被中断
@@ -439,7 +442,7 @@ npm run build
 
 前端状态同步测试重点锁定 Snapshot 整体替换、事件序号缺口、服务端行动投影，以及观察者/破产玩家不进入行动队列。测试数量会随开发持续增长，以本地验证和 CI 的实际结果为准。
 
-当前本地基线：后端发现 115 项测试，其中 113 项通过、2 项 PostgreSQL Testcontainers 测试因本机无 Docker 自动跳过；前端 6 项状态同步与连接错误测试通过，lint、typecheck 和生产构建均通过。
+当前本地基线：后端发现 118 项测试，其中 116 项通过、2 项 PostgreSQL Testcontainers 测试因本机无 Docker 自动跳过；前端 12 项状态同步、连接错误、局域网 ID、代理 Origin 兼容性与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
 
 ## Git 工作流
 

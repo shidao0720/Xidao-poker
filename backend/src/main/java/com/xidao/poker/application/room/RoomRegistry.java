@@ -3,6 +3,8 @@ package com.xidao.poker.application.room;
 import com.xidao.poker.engine.game.GameConfig;
 
 import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -92,6 +94,18 @@ public final class RoomRegistry {
             throw new RoomApplicationException(RoomApplicationErrorCode.ROOM_NOT_EMPTY, "room is not empty");
         }
         rooms.remove(roomId, runtime);
+    }
+
+    List<String> removeEmptySince(Instant cutoff) {
+        if (cutoff == null) throw new IllegalArgumentException("empty-room cutoff is required");
+        List<String> removed = new ArrayList<>();
+        rooms.forEach((roomId, runtime) -> {
+            if (runtime.closeIfEmptySince(cutoff) && rooms.remove(roomId, runtime)) {
+                removed.add(roomId);
+            }
+        });
+        removed.sort(String::compareTo);
+        return List.copyOf(removed);
     }
 
     int size() {

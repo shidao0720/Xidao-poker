@@ -71,6 +71,45 @@ describe('game snapshot synchronization', () => {
     expect(useGameStore.getState().snapshot?.lastSequence).toBe(10)
   })
 
+  it('adds a newly joined player from the realtime event without requiring a refresh snapshot', () => {
+    const initial = snapshot({ phase: 'READY', players: [snapshot().players[0]!], lastSequence: 10 })
+    useGameStore.getState().replaceSnapshot(initial)
+
+    const result = useGameStore.getState().applyEvent(event({
+      type: 'PLAYER_JOINED',
+      playerId: 'B',
+      data: {
+        name: 'Bob',
+        seat: 1,
+        stack: 1_000,
+        streetBet: 0,
+        totalContribution: 0,
+        status: 'ACTIVE',
+        inHand: false,
+        canAct: false,
+        ready: false,
+        phase: 'WAITING',
+      },
+    }))
+
+    expect(result).toBe('applied')
+    expect(useGameStore.getState().snapshot?.phase).toBe('WAITING')
+    expect(useGameStore.getState().snapshot?.players).toHaveLength(2)
+    expect(useGameStore.getState().snapshot?.players[1]).toEqual({
+      id: 'B',
+      name: 'Bob',
+      seat: 1,
+      stack: 1_000,
+      streetBet: 0,
+      totalContribution: 0,
+      status: 'ACTIVE',
+      inHand: false,
+      canAct: false,
+      ready: false,
+      holeCards: [],
+    })
+  })
+
   it('projects explicit server action data and preserves observers outside the action queue', () => {
     const next = reduceGameEvent(snapshot(), event())
 

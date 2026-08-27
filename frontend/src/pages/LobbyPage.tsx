@@ -84,7 +84,15 @@ export function LobbyPage() {
         </a>
         <label className="player-name-field">
           <span>你的昵称</span>
-          <input value={name} maxLength={32} placeholder="输入昵称" onChange={(event) => setName(event.target.value)} />
+          <input
+            id="player-name"
+            name="playerName"
+            autoComplete="nickname"
+            value={name}
+            maxLength={32}
+            placeholder="输入昵称"
+            onChange={(event) => setName(event.target.value)}
+          />
         </label>
       </header>
 
@@ -142,14 +150,14 @@ export function LobbyPage() {
           <h2>创建新牌桌</h2>
           <p>设置本场规则。开局后，新加入的玩家会安全进入观战状态。</p>
           <form onSubmit={(event) => void createRoom(event)}>
-            <label><span>房间名称</span><input required maxLength={40} value={form.roomName} onChange={(event) => setForm({ ...form, roomName: event.target.value })} /></label>
+            <label><span>房间名称</span><input id="room-name" name="roomName" required maxLength={40} value={form.roomName} onChange={(event) => setForm({ ...form, roomName: event.target.value })} /></label>
             <div className="form-row">
-              <label><span>小盲</span><input required min={1} type="number" value={form.smallBlind} onChange={(event) => setForm({ ...form, smallBlind: Number(event.target.value) })} /></label>
-              <label><span>大盲</span><input required min={2} type="number" value={form.bigBlind} onChange={(event) => setForm({ ...form, bigBlind: Number(event.target.value) })} /></label>
+              <label><span>小盲</span><input id="small-blind" name="smallBlind" required min={1} type="number" value={form.smallBlind} onChange={(event) => setForm({ ...form, smallBlind: Number(event.target.value) })} /></label>
+              <label><span>大盲</span><input id="big-blind" name="bigBlind" required min={2} type="number" value={form.bigBlind} onChange={(event) => setForm({ ...form, bigBlind: Number(event.target.value) })} /></label>
             </div>
             <div className="form-row">
-              <label><span>初始筹码</span><input required min={2} type="number" value={form.buyIn} onChange={(event) => setForm({ ...form, buyIn: Number(event.target.value) })} /></label>
-              <label><span>最大人数</span><select value={form.maxPlayers} onChange={(event) => setForm({ ...form, maxPlayers: Number(event.target.value) })}>{Array.from({ length: 9 }, (_, index) => index + 2).map((value) => <option value={value} key={value}>{value} 人</option>)}</select></label>
+              <label><span>初始筹码</span><input id="buy-in" name="buyIn" required min={2} type="number" value={form.buyIn} onChange={(event) => setForm({ ...form, buyIn: Number(event.target.value) })} /></label>
+              <label><span>最大人数</span><select id="max-players" name="maxPlayers" value={form.maxPlayers} onChange={(event) => setForm({ ...form, maxPlayers: Number(event.target.value) })}>{Array.from({ length: 9 }, (_, index) => index + 2).map((value) => <option value={value} key={value}>{value} 人</option>)}</select></label>
             </div>
             <button className="primary-button create-button" disabled={creating}>{creating ? '正在创建…' : '创建并入座'}<span>＋</span></button>
           </form>

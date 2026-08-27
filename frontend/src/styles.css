@@ -48,6 +48,13 @@ input, select {
 }
 input:focus, select:focus { border-color: rgba(232,188,104,.72); box-shadow: 0 0 0 3px rgba(232,188,104,.1); }
 
+.fatal-error { position: relative; min-height: 100vh; display: grid; justify-items: center; align-content: center; padding: 30px; text-align: center; }
+.fatal-error-mark { width: 58px; height: 58px; display: grid; place-items: center; border: 1px solid rgba(239,106,106,.42); border-radius: 18px; color: #ffc0c0; background: rgba(100,28,28,.38); font: 800 28px Georgia, serif; }
+.fatal-error h1 { margin: 8px 0; font-size: clamp(28px, 5vw, 48px); }
+.fatal-error > p:not(.eyebrow) { max-width: 500px; margin: 0; color: var(--muted); line-height: 1.7; }
+.fatal-error > div { width: min(360px, 100%); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 25px; }
+.fatal-error .primary-button, .fatal-error .ghost-button { justify-content: center; }
+
 .lobby-shell { position: relative; width: min(1380px, calc(100% - 48px)); margin: 0 auto; padding-bottom: 72px; }
 .lobby-header { height: 92px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 12px; }

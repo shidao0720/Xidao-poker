@@ -63,11 +63,19 @@ public final class GameSession {
         Player player = new Player(playerId, name, seat, config.buyIn());
         if (handInProgress()) player.becomeSpectator();
         playersById.put(playerId, player);
+        boolean inHand = handInProgress() && currentHand.containsPlayer(player.id()) && player.isInHand();
         List<GameEvent> raw = new ArrayList<>();
         raw.add(GameEvent.of(GameEventType.PLAYER_JOINED, currentHandId(), playerId, Map.of(
                 "name", name,
                 "seat", seat,
-                "status", player.status().name()
+                "stack", player.stack(),
+                "streetBet", player.streetBet(),
+                "totalContribution", player.totalContribution(),
+                "status", player.status().name(),
+                "inHand", inHand,
+                "canAct", inHand && player.canAct(),
+                "ready", player.ready(),
+                "phase", phase().name()
         )));
         if (ownerId == null) {
             ownerId = playerId;

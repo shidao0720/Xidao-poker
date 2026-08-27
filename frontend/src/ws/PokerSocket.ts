@@ -1,4 +1,5 @@
 import { useGameStore } from '../store/gameStore'
+import { createRandomId } from '../utils/randomId'
 import type {
   ClientEnvelope,
   ConnectionReadyPayload,
@@ -49,9 +50,14 @@ const TERMINAL_CONNECTION_ERRORS = new Set([
   'ROOM_CLOSED',
   'STALE_CONNECTION',
 ])
+const MAX_RECONNECT_ATTEMPTS = 8
 
 export function isTerminalConnectionError(code: string): boolean {
   return TERMINAL_CONNECTION_ERRORS.has(code)
+}
+
+export function reconnectAttemptsExhausted(attempts: number): boolean {
+  return attempts >= MAX_RECONNECT_ATTEMPTS
 }
 
 function socketBaseUrl(): string {
@@ -257,12 +263,18 @@ export class PokerSocket {
       useGameStore.getState().setError('当前未连接到牌桌')
       return
     }
-    const envelope: ClientEnvelope = { type, commandId: crypto.randomUUID(), payload }
+    const envelope: ClientEnvelope = { type, commandId: createRandomId('cmd_'), payload }
     this.socket.send(JSON.stringify(envelope))
   }
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer !== null) return
+    if (reconnectAttemptsExhausted(this.reconnectAttempt)) {
+      this.intentionallyClosed = true
+      useGameStore.getState().setConnection('closed')
+      useGameStore.getState().setError('连接多次被拒绝，请确认前后端已启动后刷新页面')
+      return
+    }
     useGameStore.getState().setConnection('reconnecting')
     const delay = Math.min(500 * 2 ** this.reconnectAttempt, 5_000)
     this.reconnectAttempt += 1

@@ -55,6 +55,18 @@ class PokerWebSocketHandlerTest {
         handler.afterConnectionEstablished(alice.session());
         handler.afterConnectionEstablished(bob.session());
 
+        JsonNode joined = lastMessageOfType(objectMapper, alice.messages(), "PLAYER_JOINED");
+        assertThat(joined.path("payload").path("playerId").asText()).isEqualTo("B");
+        JsonNode joinedData = joined.path("payload").path("data");
+        assertThat(joinedData.path("name").asText()).isEqualTo("Bob");
+        assertThat(joinedData.path("seat").asInt()).isEqualTo(1);
+        assertThat(joinedData.path("stack").asInt()).isEqualTo(1_000);
+        assertThat(joinedData.path("status").asText()).isEqualTo("ACTIVE");
+        assertThat(joinedData.path("inHand").asBoolean()).isFalse();
+        assertThat(joinedData.path("canAct").asBoolean()).isFalse();
+        assertThat(joinedData.path("ready").asBoolean()).isFalse();
+        assertThat(joinedData.path("phase").asText()).isEqualTo("WAITING");
+
         handler.handleMessage(alice.session(), message("READY", "ready-A", "{\"ready\":true}"));
         handler.handleMessage(bob.session(), message("READY", "ready-B", "{\"ready\":true}"));
         handler.handleMessage(alice.session(), message(

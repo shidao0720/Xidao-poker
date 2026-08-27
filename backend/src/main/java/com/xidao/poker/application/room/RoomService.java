@@ -3,6 +3,7 @@ package com.xidao.poker.application.room;
 import com.xidao.poker.engine.game.GameConfig;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -44,5 +45,12 @@ public final class RoomService {
 
     public void removeEmptyRoom(String roomId) {
         registry.removeEmpty(roomId);
+    }
+
+    public List<String> removeRoomsEmptyFor(Duration ttl) {
+        if (ttl == null || ttl.isNegative() || ttl.isZero()) {
+            throw new IllegalArgumentException("empty-room ttl must be positive");
+        }
+        return registry.removeEmptySince(Instant.now(clock).minus(ttl));
     }
 }

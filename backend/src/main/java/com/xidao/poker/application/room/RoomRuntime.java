@@ -56,6 +56,7 @@ public final class RoomRuntime {
     private final int commandCacheCapacity;
     private final int outboxCapacity;
     private Instant currentHandStartedAt;
+    private Instant emptySince;
     private boolean closed;
 
     RoomRuntime(RoomMetadata metadata, GameConfig config, long baseSeed) {
@@ -130,6 +131,7 @@ public final class RoomRuntime {
         this.commandCacheCapacity = commandCacheCapacity;
         this.outboxCapacity = outboxCapacity;
         this.clock = clock;
+        this.emptySince = Instant.now(clock);
     }
 
     RoomExecutionResult join(
@@ -561,6 +563,19 @@ public final class RoomRuntime {
         }
     }
 
+    /** 与 join 共用房间锁；只有空置时间达标且发送队列已清空时才原子关闭。 */
+    boolean closeIfEmptySince(Instant cutoff) {
+        if (cutoff == null) throw new IllegalArgumentException("empty-room cutoff is required");
+        lock.lock();
+        try {
+            if (emptySince == null || emptySince.isAfter(cutoff) || !removableNow()) return false;
+            closed = true;
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     RoomMetadata metadata() {
         return metadata;
     }
@@ -617,6 +632,7 @@ public final class RoomRuntime {
             currentHandStartedAt = null;
             removePlayersWaitingForHandEnd(events);
         }
+        refreshEmptySince(commandTime);
         appendRecentEvents(events);
 
         LinkedHashSet<String> targets = new LinkedHashSet<>(explicitSnapshotTargets);
@@ -779,6 +795,14 @@ public final class RoomRuntime {
 
     private long oldestAvailable(long latest) {
         return recentEvents.isEmpty() ? latest + 1 : recentEvents.getFirst().sequence();
+    }
+
+    private void refreshEmptySince(Instant now) {
+        if (gameSession.playerCount() == 0) {
+            if (emptySince == null) emptySince = now;
+        } else {
+            emptySince = null;
+        }
     }
 
     private boolean removableNow() {

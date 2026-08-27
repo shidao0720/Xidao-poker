@@ -42,6 +42,10 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
 function updatePlayer(
   players: PlayerSnapshot[],
   playerId: string | null,
@@ -59,11 +63,60 @@ function statusValue(value: unknown): PlayerStatus | undefined {
   return stringValue(value) as PlayerStatus | undefined
 }
 
+function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
+  const id = event.playerId
+  const name = stringValue(event.data.name)
+  const seat = numberValue(event.data.seat)
+  const stack = numberValue(event.data.stack)
+  const streetBet = numberValue(event.data.streetBet)
+  const totalContribution = numberValue(event.data.totalContribution)
+  const status = statusValue(event.data.status)
+  const inHand = booleanValue(event.data.inHand)
+  const canAct = booleanValue(event.data.canAct)
+  const ready = booleanValue(event.data.ready)
+
+  if (
+    !id || !name || seat === undefined || stack === undefined || streetBet === undefined ||
+    totalContribution === undefined || status === undefined || inHand === undefined ||
+    canAct === undefined || ready === undefined
+  ) return null
+
+  return {
+    id,
+    name,
+    seat,
+    stack,
+    streetBet,
+    totalContribution,
+    status,
+    inHand,
+    canAct,
+    ready,
+    holeCards: [],
+  }
+}
+
+function upsertPlayer(players: PlayerSnapshot[], player: PlayerSnapshot): PlayerSnapshot[] {
+  return [...players.filter((current) => current.id !== player.id), player]
+    .sort((left, right) => left.seat - right.seat)
+}
+
 export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameSnapshot {
   const data = event.data
   let next: GameSnapshot = { ...snapshot, lastSequence: event.sequence }
 
   switch (event.type) {
+    case 'PLAYER_JOINED': {
+      const player = joinedPlayer(event)
+      if (player) {
+        next = {
+          ...next,
+          phase: phaseValue(data.phase) ?? next.phase,
+          players: upsertPlayer(next.players, player),
+        }
+      }
+      break
+    }
     case 'READY_CHANGED':
       next = {
         ...next,

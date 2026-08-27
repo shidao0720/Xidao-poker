@@ -1,8 +1,10 @@
+import { createRandomId } from './randomId'
+
 const PLAYER_ID_KEY = 'xidao-poker.player-id'
 const PLAYER_NAME_KEY = 'xidao-poker.player-name'
 
 function newPlayerId(): string {
-  return `p_${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`
+  return createRandomId('p_')
 }
 
 export function getPlayerId(): string {
