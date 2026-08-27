@@ -45,7 +45,12 @@
 - 添加 114 项引擎、房间应用层、HTTP/WebSocket、历史持久化与故障恢复测试，包括真实 Tomcat WebSocket 升级、PostgreSQL 合约测试和 200 组确定性随机边池守恒场景。
 - 添加项目 README，记录架构决策、工程取舍、调试策略、测试策略与 Git 工作流。
 - 添加 MIT License。
-- 添加 GitHub Actions CI，自动运行后端 Maven Test；前端 Job 在模块不存在时自动跳过。
+- 添加 GitHub Actions CI，自动运行后端 Maven Test，并预留默认跳过的前端 Job。
+- 添加 React 19、TypeScript、Vite、Zustand 和 React Router 前端工程及 npm 锁文件。
+- 添加局域网大厅、创建房间、房间轮询、等待准备、房主开局和最多十席牌桌界面。
+- 添加查看者安全的手牌 / 公共牌显示、服务端驱动行动栏、下注范围输入和观战状态提示。
+- 添加原生 WebSocket 客户端，支持 token / epoch 会话级保存、自动重连、心跳、事件序号检测、有限回放和 Snapshot 恢复。
+- 添加前端 Snapshot 整体替换、增量投影、序号缺口及观察者防卡局测试。
 - 添加适用于 Java、Maven、Node、Vite、IDE、日志和本地密钥的 `.gitignore`。
 - 添加 `.gitattributes`，统一跨平台文本行尾并标记常见二进制资源。
 
@@ -64,6 +69,8 @@
 - 保留通用 DataSource 自动配置排除项，由条件历史配置显式创建连接池，使默认模式和 PostgreSQL 离线模式都能启动实时服务。
 - 将历史表迁移延迟到首次保存手牌时执行；Flyway 或 PostgreSQL 故障通过异步重试隔离，不进入房间锁和实时命令事务。
 - 单手接受行动历史设置 8,192 条硬上限，超限时保留牌局运行并写入 `action_history_complete=false`，避免历史功能重新引入无上限内存。
+- 玩家行动事件增加 `status` 和 `canAct` 投影字段，使非行动者客户端无需为每次下注请求完整快照。
+- 前端 CI 调整为仓库变量 `ENABLE_FRONTEND_CI=true` 时才启用，当前阶段默认保持跳过。
 
 ### Fixed
 

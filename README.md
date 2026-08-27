@@ -4,7 +4,7 @@
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：后端核心流程阶段。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连和 PostgreSQL 手牌历史持久化均已落地。当前后端共有 112 项常规测试通过，另有 2 项 Testcontainers PostgreSQL 合约测试在 Docker 可用时执行；React 前端和真实多浏览器联调仍在开发中。
+> 当前状态：首个端到端 MVP 阶段。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连、PostgreSQL 手牌历史持久化，以及 React 大厅 / 等待房间 / 牌桌界面均已落地。真实多浏览器联调仍在开发中。
 
 ## 目标游戏流程
 
@@ -47,15 +47,13 @@
 - JUnit 5、AssertJ
 - Maven
 
-### Frontend（计划）
+### Frontend
 
 - React 19、TypeScript、Vite
-- Tailwind CSS
 - Zustand
 - React Router
-- Axios
-- WebSocket Client
-- Framer Motion
+- 原生 Fetch / WebSocket
+- 响应式 CSS
 
 Redis 被视为后期优化项，不是第一版核心依赖。
 
@@ -100,6 +98,23 @@ Controller / WsHandler → Application Service → RoomRuntime → Game Engine
 ```
 
 游戏引擎不依赖 Spring、WebSocket、数据库或前端协议，可以直接通过 JUnit 驱动。
+
+前端遵循单向数据流：
+
+```text
+HTTP / WebSocket
+       │
+       ▼
+API Client / PokerSocket
+       │
+       ▼
+Zustand（唯一牌局状态源）
+       │
+       ▼
+Lobby / Table / Action components
+```
+
+组件不复制 `players`、`phase` 或当前行动者状态。`ROOM_SNAPSHOT` 会整体替换 Zustand 中的旧快照；增量事件只投影服务端明确给出的字段。行动栏直接渲染 Snapshot 中的 `actionOptions`，不会在浏览器重新实现下注规则。重连凭据仅保存在当前浏览器标签页的 `sessionStorage`，刷新时用于携带旧 epoch/token，成功后由服务端轮换。
 
 ## 核心工程决策
 
@@ -211,6 +226,8 @@ currentActor != null  →  currentActor.canAct() == true
 每个事件将带有单调递增序号。客户端发现序号不连续时应请求新快照，而不是猜测缺失状态。收到快照时必须 replace state，不能与旧状态盲目 merge。
 
 重连在同一个房间原子操作中完成三件事：校验客户端持有的旧连接 epoch、替换连接 ID、递增 epoch，并生成该玩家专属快照加入定向 outbox。每个 Snapshot delivery 都绑定目标 `playerId + connectionId + connectionEpoch`；发送适配器只能投递到完全匹配的当前连接，排队期间已经失效的旧连接快照必须丢弃。命令确认只允许携带发起者自己的快照，绝不会包含“所有玩家各自的私有快照”。如果增量广播失败，发送器会自动为所有在线玩家排入隐私过滤后的恢复快照。
+
+前端收到不连续序号时先请求 `REPLAY_EVENTS`。事件仍在 512 条窗口内时按序补齐；窗口之外或回放仍不连续时改为 `REQUEST_SNAPSHOT`。观察者、掉线和破产玩家即使留在玩家列表中，其界面也不会生成行动按钮，因为可操作性只来自当前查看者 Snapshot 的 `actionOptions`。
 
 ### 10. 网络命令的幂等与防重放
 
@@ -352,6 +369,10 @@ timestamp level module roomId gameId handId playerId event
 
 牌组支持注入随机种子。记录 seed、初始玩家状态和行动日志后，可以在测试环境重放问题牌局。显式 seed 入口只保留给测试和问题复现；正式建房入口已使用 `SecureRandom`，且不会向 Controller 暴露 seed 参数。
 
+### 前端同步排错
+
+前端问题先按 `connection state → ROOM_SNAPSHOT.lastSequence → 后续 Event.sequence → 当前 viewer actionOptions` 的顺序定位。浏览器 Network 面板可检查 WebSocket 信封，但截图或 Issue 必须删除 `resumeToken` 和未公开手牌。若界面序号落后，先发送 `REPLAY_EVENTS`；无法补齐时以新 Snapshot 整体替换，不通过手工修改 Zustand 或组件局部状态“修好”界面。重复连接错误应检查是否同时打开了持有同一玩家身份的旧标签页。
+
 ## 测试策略
 
 测试优先级为：
@@ -407,9 +428,18 @@ Correctness → State Consistency → Debuggability → Features
 ```bash
 cd backend
 mvn test
+
+cd ../frontend
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-当前本地基线：114 项后端测试被发现，其中 112 项通过、0 failures / 0 errors；本机没有 Docker 时，2 项真实 PostgreSQL 合约测试自动跳过。Docker 可用的 CI / 开发环境会执行全部 114 项。该数字会随开发持续增长，以 CI 的实际结果为准。
+前端状态同步测试重点锁定 Snapshot 整体替换、事件序号缺口、服务端行动投影，以及观察者/破产玩家不进入行动队列。测试数量会随开发持续增长，以本地验证和 CI 的实际结果为准。
+
+当前本地基线：后端发现 115 项测试，其中 113 项通过、2 项 PostgreSQL Testcontainers 测试因本机无 Docker 自动跳过；前端 6 项状态同步与连接错误测试通过，lint、typecheck 和生产构建均通过。
 
 ## Git 工作流
 
@@ -482,8 +512,8 @@ GitHub Actions 配置位于 `.github/workflows/ci.yml`：
 - Push 或 Pull Request 到 `main`、`develop` 时运行
 - 使用 Temurin Java 21 执行后端 `mvn test`
 - 测试失败时上传 Surefire 报告，保留 7 天
-- 检测不到 `frontend/package.json` 时，前端 Job 自动显示为 Skipped
-- 前端模块建立后，预留 Job 自动启用 Node.js 22 的安装、lint、typecheck、test 和 build
+- 前端 Job 已预留 Node.js 22 的安装、lint、typecheck、test 和 build，但默认保持 Skipped
+- 需要启用前端 CI 时，在 GitHub 仓库 Variables 中设置 `ENABLE_FRONTEND_CI=true`
 - 同一分支的新提交会取消仍在运行的旧 CI，避免浪费资源
 
 在推送到 GitHub 前，应先在本地运行与 CI 相同的关键检查。
@@ -496,16 +526,20 @@ GitHub Actions 配置位于 `.github/workflows/ci.yml`：
 
 ## 本地开发环境
 
-当前后端要求：
+当前开发环境要求：
 
 - JDK 21
 - Maven 3.9+
+- Node.js 22+
+- npm 10+
 
 验证环境：
 
 ```bash
 java -version
 mvn -version
+node -v
+npm -v
 ```
 
 运行现阶段测试：
@@ -523,6 +557,16 @@ mvn spring-boot:run
 ```
 
 默认 HTTP 地址为 `http://localhost:8080/api/rooms`，WebSocket 地址为 `ws://localhost:8080/ws/poker`。历史持久化默认关闭，启动服务不要求本机安装 PostgreSQL。
+
+另开终端启动前端：
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+默认前端地址为 `http://localhost:5173`。Vite 会把同源 `/api` 和 `/ws` 代理到 `localhost:8080`，并重写 WebSocket Origin，因此本地开发无需把后端 Origin 白名单设置为 `*`。`npm run dev` 已监听 `0.0.0.0`；局域网内其他设备应访问开发机的可信内网 IP，并确保系统防火墙仅对可信局域网开放相应端口。`.env.example` 预留了独立后端地址；若以后让浏览器跨源直连，必须同时增加受限的 HTTP CORS 与 WebSocket Origin 配置，不能只修改前端变量，也不要提交私人 IP 或令牌。
 
 ### 启用 PostgreSQL 历史持久化
 
@@ -590,7 +634,16 @@ Xidao-poker/
 │           ├── engine/
 │           ├── persistence/history/
 │           └── web/
-├── frontend/                  # 计划
+├── frontend/
+│   ├── src/
+│   │   ├── api/              # 大厅 HTTP 客户端
+│   │   ├── components/       # 手牌、座位、行动栏与连接状态
+│   │   ├── pages/            # 大厅与牌桌路由
+│   │   ├── store/            # Snapshot replace + Event 投影
+│   │   ├── types/            # 与后端协议对齐的类型
+│   │   └── ws/               # 重连、回放与心跳
+│   ├── package.json
+│   └── vite.config.ts
 └── README.md
 ```
 
@@ -610,12 +663,12 @@ Xidao-poker/
 - [x] Spring HTTP 大厅 API
 - [x] WebSocket 协议、身份绑定与实时广播
 - [x] PostgreSQL 手牌历史、行动记录与玩家统计持久化
-- [ ] React 大厅、房间和牌桌界面
+- [x] React 大厅、等待房间和牌桌 MVP
 - [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
 - [x] WebSocket 30 秒宽限调度与 token / epoch 安全重连
 - [ ] 多浏览器重连联调
 - [ ] 多浏览器 10 人局域网联调
-- [x] Backend Maven Test CI（前端模块不存在时自动跳过）
+- [x] Backend Maven Test CI（前端 Job 预留且默认跳过）
 - [ ] 容器化与首个 GitHub Release
 
 ## 安全与公平性说明

@@ -68,7 +68,8 @@ jobs:
   frontend:
     name: Frontend - Reserved
     needs: detect
-    if: needs.detect.outputs.frontend-exists == 'true'
+    # 前端流水线先保留但默认跳过；需要时在仓库 Variables 中显式设置 ENABLE_FRONTEND_CI=true。
+    if: needs.detect.outputs.frontend-exists == 'true' && vars.ENABLE_FRONTEND_CI == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

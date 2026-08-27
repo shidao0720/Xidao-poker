@@ -54,6 +54,24 @@ class HandTest {
     }
 
     @Test
+    void playerActionEventCarriesProjectionStatusForIncrementalClients() {
+        Player actor = player("A", 0, 1_000);
+        Player smallBlind = player("B", 1, 1_000);
+        Player bigBlind = player("C", 2, 1_000);
+        Hand hand = new Hand(1, CONFIG, List.of(actor, smallBlind, bigBlind), 0, 9L);
+        hand.start();
+
+        var actionEvent = hand.handle(PlayerAction.fold(actor.id())).stream()
+                .filter(event -> event.type() == GameEventType.PLAYER_ACTION)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(actionEvent.data())
+                .containsEntry("status", PlayerStatus.FOLDED.name())
+                .containsEntry("canAct", false);
+    }
+
+    @Test
     void shortBigBlindStillUsesFullBigBlindAsPreflopBringIn() {
         Player button = player("A", 0, 100);
         Player shortBigBlind = player("B", 1, 5);

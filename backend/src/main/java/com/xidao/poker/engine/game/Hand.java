@@ -159,7 +159,9 @@ public final class Hand {
                 "stack", player.stack(),
                 "streetBet", player.streetBet(),
                 "currentBet", result.currentBet(),
-                "fullRaise", result.fullRaise()
+                "fullRaise", result.fullRaise(),
+                "status", player.status().name(),
+                "canAct", player.canAct()
         ));
 
         if (result.roundComplete()) {
