@@ -3,6 +3,10 @@ package com.xidao.poker.application.room;
 import com.xidao.poker.application.command.PlayerActionCommand;
 import com.xidao.poker.application.command.StartGameCommand;
 import com.xidao.poker.application.command.TurnTimeoutCommand;
+import com.xidao.poker.application.history.CompletedHandArchive;
+import com.xidao.poker.application.history.HandHistoryPublisher;
+import com.xidao.poker.application.history.HistoryPublishResult;
+import com.xidao.poker.application.history.NoOpHandHistoryPublisher;
 import com.xidao.poker.engine.action.IllegalActionException;
 import com.xidao.poker.engine.snapshot.GameSnapshot;
 import org.slf4j.Logger;
@@ -18,12 +22,23 @@ public final class GameApplicationService {
 
     private final RoomRegistry registry;
     private final RoomEventDispatcher dispatcher;
+    private final HandHistoryPublisher historyPublisher;
 
     public GameApplicationService(RoomRegistry registry, RoomEventDispatcher dispatcher) {
+        this(registry, dispatcher, NoOpHandHistoryPublisher.INSTANCE);
+    }
+
+    public GameApplicationService(
+            RoomRegistry registry,
+            RoomEventDispatcher dispatcher,
+            HandHistoryPublisher historyPublisher
+    ) {
         if (registry == null) throw new IllegalArgumentException("room registry is required");
         if (dispatcher == null) throw new IllegalArgumentException("room event dispatcher is required");
+        if (historyPublisher == null) throw new IllegalArgumentException("history publisher is required");
         this.registry = registry;
         this.dispatcher = dispatcher;
+        this.historyPublisher = historyPublisher;
     }
 
     public RoomExecutionResult join(
@@ -154,6 +169,7 @@ public final class GameApplicationService {
                         + "sequence={} duplicate={} ignored={} eventCount={}",
                 roomId, handId, playerId, commandId, operation, result.lastSequence(),
                 result.duplicate(), result.ignored(), result.events().size());
+        publishCompletedHands(result.completedHands());
         try {
             dispatcher.signal(roomId);
         } catch (RuntimeException error) {
@@ -163,6 +179,27 @@ public final class GameApplicationService {
             // outbox 保留未发送内容，后续命令或恢复流程可以再次 signal。
         }
         return result;
+    }
+
+    private void publishCompletedHands(Iterable<CompletedHandArchive> completedHands) {
+        for (CompletedHandArchive archive : completedHands) {
+            HistoryPublishResult result;
+            try {
+                result = historyPublisher.publish(archive);
+            } catch (RuntimeException error) {
+                log.error("HAND_HISTORY_PUBLISH_FAILED roomId={} handId={} code={}",
+                        archive.gameId(), archive.handId(), error.getClass().getSimpleName(), error);
+                continue;
+            }
+            if (result == HistoryPublishResult.ACCEPTED) {
+                log.info("HAND_HISTORY_QUEUED roomId={} handId={}", archive.gameId(), archive.handId());
+            } else if (result == HistoryPublishResult.DISABLED) {
+                log.debug("HAND_HISTORY_DISABLED roomId={} handId={}", archive.gameId(), archive.handId());
+            } else {
+                log.error("HAND_HISTORY_NOT_QUEUED roomId={} handId={} reason={}",
+                        archive.gameId(), archive.handId(), result);
+            }
+        }
     }
 
     private <T> T executeReadWithDelivery(

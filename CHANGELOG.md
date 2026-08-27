@@ -34,9 +34,15 @@
 - 添加 WebSocket 握手身份绑定、32 字节随机重连令牌、成功重连令牌轮换和旧 Socket 关闭。
 - 添加默认 30 秒断线宽限调度；过期任务通过连接 epoch 防止删除新连接。
 - 添加同源 WebSocket 默认策略、可配置可信 Origin、16 KiB 消息上限与并发发送保护。
+- 添加仅供服务端历史归档使用的 `CompletedHandSnapshot`，保存所有参与者私有牌、起止筹码、投入、奖金、底池和摊牌结果，不复用网络查看者 Snapshot。
+- 添加应用层 `HandHistoryPublisher` / `HandHistoryRepository` 端口、默认 256 容量的有界异步队列、重试退避和优雅关闭。
+- 添加 PostgreSQL 历史适配器和 Flyway V1 迁移，覆盖 `game_record`、`poker_user`、`hand_history`、`hand_player`、`game_action` 与 `player_statistic`。
+- 添加 `(game_id, hand_id)` 幂等保存、整手事务、JSONB 公共牌 / 底池 / 奖金 / 私有牌以及玩家统计更新。
+- 添加 `postgres` Profile 与环境变量数据库配置；默认关闭历史持久化，启用后数据库离线也不会阻止实时 Web 服务启动。
+- 添加 Testcontainers PostgreSQL 16 合约测试，在 Docker 可用时验证迁移、JSONB、重复写入和子记录失败后的事务回滚。
 - 添加 SLF4J 结构化应用命令日志和发送失败日志。
 - 正式建房与连续手牌使用 `SecureRandom` 洗牌，同时保留仅供测试的确定性 seed 入口。
-- 添加 102 个引擎、房间应用层、HTTP/WebSocket 适配层与故障恢复单元 / 流程测试，包括真实 Tomcat WebSocket 升级和 200 组确定性随机边池守恒场景。
+- 添加 114 项引擎、房间应用层、HTTP/WebSocket、历史持久化与故障恢复测试，包括真实 Tomcat WebSocket 升级、PostgreSQL 合约测试和 200 组确定性随机边池守恒场景。
 - 添加项目 README，记录架构决策、工程取舍、调试策略、测试策略与 Git 工作流。
 - 添加 MIT License。
 - 添加 GitHub Actions CI，自动运行后端 Maven Test；前端 Job 在模块不存在时自动跳过。
@@ -55,7 +61,9 @@
 - 房间关闭与加入共享原子生命周期边界，目录只删除已经没有成员、待移除玩家、outbox 或发送任务的房间。
 - 手牌、牌组、底池和房间命令增加空值、重复牌、座位、溢出与归属校验。
 - 房间摘要增加创建时间、盲注、买入和人数上限，供大厅直接渲染。
-- 在历史持久化实现前关闭数据库自动配置，使实时服务可以在没有 PostgreSQL 的环境启动。
+- 保留通用 DataSource 自动配置排除项，由条件历史配置显式创建连接池，使默认模式和 PostgreSQL 离线模式都能启动实时服务。
+- 将历史表迁移延迟到首次保存手牌时执行；Flyway 或 PostgreSQL 故障通过异步重试隔离，不进入房间锁和实时命令事务。
+- 单手接受行动历史设置 8,192 条硬上限，超限时保留牌局运行并写入 `action_history_complete=false`，避免历史功能重新引入无上限内存。
 
 ### Fixed
 
@@ -77,6 +85,8 @@
 - 修复外部非法底池数据可能造成部分结算、筹码不守恒或把奖金分给弃牌玩家的问题。
 - 修复应用命令已经提交后，发送器调度失败却被错误返回为命令失败的问题。
 - 修复旧重连令牌、旧连接快照或部分重连参数可能接管当前 Socket 的问题。
+- 修复历史发布、数据库写入或迁移失败可能把已经结算的手牌错误报告为行动失败的问题。
+- 修复启用历史持久化时 MyBatis 扫描非 Mapper 接口、事务代理无法代理 final Repository，以及 Flyway 在启动线程提前连接数据库的问题。
 
 ## Release process
 

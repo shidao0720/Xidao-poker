@@ -4,7 +4,7 @@
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：后端核心流程阶段。游戏引擎、`RoomRuntime` 应用层、Spring HTTP 大厅 API、原生 WebSocket 协议、实时广播、连接代次、重连令牌和 30 秒断线宽限均已落地。当前后端共有 102 项测试通过；PostgreSQL 历史持久化、React 前端和真实多浏览器联调仍在开发中。
+> 当前状态：后端核心流程阶段。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连和 PostgreSQL 手牌历史持久化均已落地。当前后端共有 112 项常规测试通过，另有 2 项 Testcontainers PostgreSQL 合约测试在 Docker 可用时执行；React 前端和真实多浏览器联调仍在开发中。
 
 ## 目标游戏流程
 
@@ -82,8 +82,13 @@ RoomRuntime / RoomEventDispatcher
 Game Engine（纯 Java）
   GameSession → Hand → BettingRound / PotManager / HandEvaluator
 
-Application Service ─────→ Repository / Persistence
-                           PostgreSQL：已结束的历史数据
+Application Service ─────→ CompletedHandArchive
+                           │
+                           ▼
+                    有界异步历史队列
+                           │
+                           ▼
+                    Repository / PostgreSQL
 RoomRuntime ──────────────→ Memory：实时牌局状态
 ```
 
@@ -113,7 +118,7 @@ Controller / WsHandler → Application Service → RoomRuntime → Game Engine
 
 ### 2. 实时状态保存在内存，历史记录写入 PostgreSQL
 
-下注等高频状态变化不会逐次写入数据库。每个房间在内存中持有唯一的实时游戏对象，每手结束后再异步保存历史数据。
+下注等高频状态变化不会逐次写入数据库。每个房间在内存中持有唯一的实时游戏对象；`HAND_ENDED` 提交后生成与网络 Snapshot 隔离的 `CompletedHandArchive`，离开房间锁后再异步保存整手历史。
 
 优点：
 
@@ -128,6 +133,10 @@ Controller / WsHandler → Application Service → RoomRuntime → Game Engine
 
 第一版优先保证单服务实例下的正确性。Redis 后期可用于房间目录、在线状态和临时会话缓存，但不会成为游戏引擎的真实状态源。
 
+历史写入使用固定线程数和有界队列，默认 2 个写线程、256 个待处理任务、最多 3 次尝试。PostgreSQL 离线、迁移失败或 Repository 抛错只会产生结构化日志，不会回滚已经提交的牌局命令；数据库恢复后，后续写入会再次尝试按需执行 Flyway 迁移。队列满时新归档会被拒绝并记录 `HAND_HISTORY_QUEUE_FULL`，而不是阻塞房间线程或无限占用内存。这个取舍优先保证实时牌局可用性；需要审计级零丢失时，应在后续版本加入磁盘型 durable outbox。
+
+单手只记录引擎已接受的玩家行动，最多 8,192 条。达到上限后牌局继续运行，数据库中的 `action_history_complete` 会标记为 `false`，避免用无上限集合换取表面上的完整性。
+
 ### 3. 房间级原子锁 + 共享发送执行器
 
 每个 `RoomRuntime` 通过独立公平锁串行提交同一房间的命令，避免两个 WebSocket 行动同时改变一副牌。实际网络发送离开房间锁后执行，并由共享 Executor 为每个房间维持单一 drain loop，确保消息顺序。
@@ -140,7 +149,7 @@ Controller / WsHandler → Application Service → RoomRuntime → Game Engine
 
 游戏引擎以命令式方式更新当前状态，每个命令只返回本次产生的不可变事件。`GameSession` 与 `Hand` 不保存不断增长的事件历史，避免长时间运行导致内存持续上涨。
 
-应用层默认只保留最近 512 个事件用于短暂补发，客户端序号早于缓存窗口时必须请求完整 Snapshot。命令去重缓存默认 1,024 条，发送 outbox 默认 1,024 条；达到上限时丢弃旧增量并为每位在线玩家生成当前快照。第一版不会仅靠事件回放重建全部牌局；长期审计日志将在每手结束后异步持久化。
+应用层默认只保留最近 512 个事件用于短暂补发，客户端序号早于缓存窗口时必须请求完整 Snapshot。命令去重缓存默认 1,024 条，发送 outbox 默认 1,024 条；达到上限时丢弃旧增量并为每位在线玩家生成当前快照。第一版不会仅靠事件回放重建全部牌局；已结束手牌的玩家、行动、底池和结算结果通过独立归档模型异步持久化。
 
 ### 5. Game Session 与 Hand 生命周期分离
 
@@ -362,6 +371,8 @@ Correctness → State Consistency → Debuggability → Features
 - Player Lifecycle：Disconnect、Reconnect、Busted、Spectator
 - Invariants：观察者、破产、弃牌、All-in 和离线玩家永远不会成为当前行动者
 - Application：连接 ID / epoch、防重复命令、过期 hand/turn、有限回放缓存、outbox 降级与定向快照隐私
+- History：完成手牌敏感投影、起止筹码核对、单手行动上限、有界异步队列、重试与关闭语义
+- Persistence：重复手牌幂等、玩家统计只更新一次、JSON 序列化和 Repository 调用边界
 
 ### 流程测试
 
@@ -387,6 +398,9 @@ Correctness → State Consistency → Debuggability → Features
 - 客户端事件序号缺失后重新请求 Snapshot
 - 事件广播失败后自动回落为 viewer-specific Snapshot
 - PostgreSQL 暂时不可用时，进行中的牌局不被中断
+- 历史发布器异常或队列满载时，已经提交的 `HAND_ENDED` 不被回滚
+- Flyway 首次迁移失败后可重试，启用持久化但数据库离线时完整 Web 服务仍可启动
+- 有 Docker 时使用 Testcontainers 验证 PostgreSQL 16 的迁移、JSONB、幂等和事务回滚
 
 ### 运行测试
 
@@ -395,7 +409,7 @@ cd backend
 mvn test
 ```
 
-当前基线：102 个后端单元、适配层集成与流程测试通过，0 failures / 0 errors。该数字会随开发持续增长，以 CI 的实际结果为准。
+当前本地基线：114 项后端测试被发现，其中 112 项通过、0 failures / 0 errors；本机没有 Docker 时，2 项真实 PostgreSQL 合约测试自动跳过。Docker 可用的 CI / 开发环境会执行全部 114 项。该数字会随开发持续增长，以 CI 的实际结果为准。
 
 ## Git 工作流
 
@@ -508,7 +522,33 @@ cd backend
 mvn spring-boot:run
 ```
 
-默认 HTTP 地址为 `http://localhost:8080/api/rooms`，WebSocket 地址为 `ws://localhost:8080/ws/poker`。历史持久化尚未接入，因此当前阶段显式关闭了数据库自动配置，启动服务不要求本机安装 PostgreSQL；持久化模块实现时会重新启用。
+默认 HTTP 地址为 `http://localhost:8080/api/rooms`，WebSocket 地址为 `ws://localhost:8080/ws/poker`。历史持久化默认关闭，启动服务不要求本机安装 PostgreSQL。
+
+### 启用 PostgreSQL 历史持久化
+
+先创建空数据库，再通过环境变量提供连接信息。不要把真实凭据写入仓库：
+
+```bash
+export POKER_DB_URL='jdbc:postgresql://localhost:5432/xidao_poker'
+export POKER_DB_USERNAME='<username>'
+export POKER_DB_PASSWORD='<password>'
+
+cd backend
+mvn spring-boot:run -Dspring-boot.run.profiles=postgres
+```
+
+`postgres` Profile 只负责打开 `poker.persistence.enabled` 并读取环境变量。Flyway 不在启动线程中连接数据库，而是在首次保存已结束手牌时按需迁移；迁移或写入失败由有界异步写入器重试，实时 HTTP / WebSocket 服务继续运行。
+
+首版迁移创建以下表：
+
+- `game_record`：房间级游戏配置、时间范围和已保存手牌数
+- `poker_user`：局域网玩家 ID 与最近显示名
+- `hand_history`：公共牌、底池、奖金和行动完整性标记
+- `hand_player`：座位、私有牌、起止筹码、投入、奖金与摊牌结果
+- `game_action`：引擎接受的行动及行动后筹码状态
+- `player_statistic`：参局数、获胜手数、累计投入和累计奖金
+
+同一手使用 `(game_id, hand_id)` 唯一键。重复异步提交返回 `ALREADY_EXISTS`，不会重复插入行动或累加玩家统计；一手牌的主记录、玩家、行动与统计在同一事务中提交。
 
 ## 目录结构（当前与规划）
 
@@ -520,6 +560,7 @@ Xidao-poker/
 │       ├── main/java/com/xidao/poker/
 │       │   ├── application/
 │       │   │   ├── command/
+│       │   │   ├── history/
 │       │   │   └── room/
 │       │   ├── config/
 │       │   ├── engine/
@@ -529,18 +570,25 @@ Xidao-poker/
 │       │   │   ├── eval/
 │       │   │   ├── event/
 │       │   │   ├── game/
+│       │   │   ├── history/
 │       │   │   ├── player/
 │       │   │   ├── pot/
 │       │   │   ├── snapshot/
 │       │   │   └── table/
+│       │   ├── persistence/history/
 │       │   └── web/
 │       │       ├── api/
 │       │       ├── protocol/
 │       │       └── ws/
-│       ├── main/resources/application.yml
+│       ├── main/resources/
+│       │   ├── application.yml
+│       │   ├── application-postgres.yml
+│       │   └── db/migration/
 │       └── test/java/com/xidao/poker/
+│           ├── application/history/
 │           ├── application/room/
 │           ├── engine/
+│           ├── persistence/history/
 │           └── web/
 ├── frontend/                  # 计划
 └── README.md
@@ -561,7 +609,7 @@ Xidao-poker/
 - [x] 有界事件回放、命令幂等、连接代次与异步定向 outbox
 - [x] Spring HTTP 大厅 API
 - [x] WebSocket 协议、身份绑定与实时广播
-- [ ] PostgreSQL 历史数据持久化
+- [x] PostgreSQL 手牌历史、行动记录与玩家统计持久化
 - [ ] React 大厅、房间和牌桌界面
 - [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
 - [x] WebSocket 30 秒宽限调度与 token / epoch 安全重连

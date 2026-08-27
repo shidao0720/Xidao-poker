@@ -2,6 +2,7 @@ package com.xidao.poker.application.room;
 
 import com.xidao.poker.engine.game.GameConfig;
 
+import java.time.Clock;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -11,13 +12,27 @@ import java.util.concurrent.ConcurrentMap;
 /** 线程安全的房间运行实例目录。 */
 public final class RoomRegistry {
     private final ConcurrentMap<String, RoomRuntime> rooms = new ConcurrentHashMap<>();
+    private final Clock clock;
+
+    public RoomRegistry() {
+        this(Clock.systemUTC());
+    }
+
+    public RoomRegistry(Clock clock) {
+        if (clock == null) throw new IllegalArgumentException("clock is required");
+        this.clock = clock;
+    }
 
     RoomRuntime create(RoomMetadata metadata, GameConfig config) {
-        return register(new RoomRuntime(metadata, config));
+        return register(new RoomRuntime(metadata, config, clock));
     }
 
     RoomRuntime create(RoomMetadata metadata, GameConfig config, long baseSeed) {
-        return register(new RoomRuntime(metadata, config, baseSeed));
+        return register(new RoomRuntime(metadata, config, baseSeed,
+                RoomRuntime.DEFAULT_REPLAY_EVENTS,
+                RoomRuntime.DEFAULT_COMMAND_CACHE,
+                RoomRuntime.DEFAULT_OUTBOX_DELIVERIES,
+                clock));
     }
 
     private RoomRuntime register(RoomRuntime runtime) {
@@ -46,7 +61,8 @@ public final class RoomRegistry {
                 baseSeed,
                 replayCapacity,
                 commandCacheCapacity,
-                outboxCapacity
+                outboxCapacity,
+                clock
         );
         return register(runtime);
     }

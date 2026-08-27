@@ -1,5 +1,6 @@
 package com.xidao.poker.application.room;
 
+import com.xidao.poker.application.history.CompletedHandArchive;
 import com.xidao.poker.engine.event.GameEvent;
 import com.xidao.poker.engine.snapshot.GameSnapshot;
 
@@ -15,9 +16,22 @@ public record RoomExecutionResult(
         long connectionEpoch,
         long lastSequence,
         List<GameEvent> events,
-        GameSnapshot requesterSnapshot
+        GameSnapshot requesterSnapshot,
+        List<CompletedHandArchive> completedHands
 ) {
     public RoomExecutionResult {
         events = events == null ? List.of() : List.copyOf(events);
+        completedHands = completedHands == null ? List.of() : List.copyOf(completedHands);
+    }
+
+    public RoomExecutionResult(
+            boolean duplicate,
+            boolean ignored,
+            long connectionEpoch,
+            long lastSequence,
+            List<GameEvent> events,
+            GameSnapshot requesterSnapshot
+    ) {
+        this(duplicate, ignored, connectionEpoch, lastSequence, events, requesterSnapshot, List.of());
     }
 }

@@ -5,8 +5,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 
 /**
- * 实时牌局阶段只使用内存状态。数据库自动配置会在持久化模块落地时重新启用；
- * 在此之前不能因为本机没有 PostgreSQL 而阻止 HTTP / WebSocket 服务启动。
+ * 实时牌局只使用内存状态。历史数据库由条件配置手动创建连接池，保留这里的排除项可确保
+ * 默认模式以及 PostgreSQL 临时不可用时，不会由通用 DataSource 自动配置阻止服务启动。
  */
 @SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
 public class PokerApplication {

@@ -10,6 +10,9 @@ import com.xidao.poker.engine.eval.HandEvaluator;
 import com.xidao.poker.engine.eval.HandResult;
 import com.xidao.poker.engine.event.GameEvent;
 import com.xidao.poker.engine.event.GameEventType;
+import com.xidao.poker.engine.history.CompletedHandAction;
+import com.xidao.poker.engine.history.CompletedHandPlayer;
+import com.xidao.poker.engine.history.CompletedHandSnapshot;
 import com.xidao.poker.engine.player.Player;
 import com.xidao.poker.engine.player.PlayerStatus;
 import com.xidao.poker.engine.pot.Pot;
@@ -35,6 +38,8 @@ import java.util.Set;
  * {@link Player#canAct()} 计算，状态变化后立即重新协调并自动推进。</p>
  */
 public final class Hand {
+    static final int MAX_ARCHIVED_ACTIONS = 8_192;
+
     private final long id;
     private final GameConfig config;
     private final List<Player> participants;
@@ -43,6 +48,9 @@ public final class Hand {
     private final int buttonSeat;
     private final List<Card> communityCards = new ArrayList<>(5);
     private final Set<String> showdownPlayerIds = new LinkedHashSet<>();
+    private final List<CompletedHandAction> acceptedActions = new ArrayList<>();
+    private final Map<String, Long> showdownHandKeys = new LinkedHashMap<>();
+    private final Map<String, String> showdownCategories = new LinkedHashMap<>();
     private List<GameEvent> emittedEvents;
     private List<Pot> settledPots = List.of();
     private List<PotAward> awards = List.of();
@@ -53,6 +61,8 @@ public final class Hand {
     private long turnCounter;
     private long currentTurnId;
     private boolean started;
+    private boolean actionHistoryComplete = true;
+    private List<CompletedHandPlayer> completedPlayers = List.of();
 
     public Hand(long id, GameConfig config, List<Player> participants, int buttonSeat, long seed) {
         this(id, config, participants, buttonSeat, new Random(seed));
@@ -141,6 +151,7 @@ public final class Hand {
         long actedTurnId = currentTurnId;
         BettingActionResult result = bettingRound.act(action);
         Player player = requirePlayer(action.playerId());
+        recordAcceptedAction(actedTurnId, action, player, result);
         emit(GameEventType.PLAYER_ACTION, player.id(), Map.of(
                 "turnId", actedTurnId,
                 "action", action.type().name(),
@@ -297,24 +308,22 @@ public final class Hand {
 
     private void showdownAndSettle() {
         transitionTo(GamePhase.SHOWDOWN);
-        Map<String, Long> handKeys = new LinkedHashMap<>();
-        Map<String, String> categories = new LinkedHashMap<>();
         Card[] board = communityCards.toArray(Card[]::new);
         for (Player player : contenders()) {
             HandResult result = HandEvaluator.bestHand(player.holeCards().toArray(Card[]::new), board);
-            handKeys.put(player.id(), result.key());
-            categories.put(player.id(), result.category().name());
+            showdownHandKeys.put(player.id(), result.key());
+            showdownCategories.put(player.id(), result.category().name());
             showdownPlayerIds.add(player.id());
         }
         emit(GameEventType.SHOWDOWN, null, Map.of(
-                "handKeys", Map.copyOf(handKeys),
-                "categories", Map.copyOf(categories)
+                "handKeys", Map.copyOf(showdownHandKeys),
+                "categories", Map.copyOf(showdownCategories)
         ));
 
         transitionTo(GamePhase.SETTLEMENT);
         settledPots = PotManager.buildPots(participants);
         awards = PotManager.settle(
-                settledPots, participants, handKeys, buttonSeat, config.maxPlayers());
+                settledPots, participants, showdownHandKeys, buttonSeat, config.maxPlayers());
         emit(GameEventType.SETTLEMENT, null, Map.of(
                 "showdown", true,
                 "awards", awards
@@ -323,6 +332,9 @@ public final class Hand {
     }
 
     private void finishHand() {
+        completedPlayers = participants.stream()
+                .map(this::completedPlayer)
+                .toList();
         for (Player player : participants) {
             boolean busted = player.stack() == 0;
             player.finishHand();
@@ -337,6 +349,57 @@ public final class Hand {
                 "pot", potAmount(),
                 "awards", awards
         ));
+    }
+
+    private void recordAcceptedAction(
+            long turnId,
+            PlayerAction action,
+            Player player,
+            BettingActionResult result
+    ) {
+        if (acceptedActions.size() >= MAX_ARCHIVED_ACTIONS) {
+            actionHistoryComplete = false;
+            return;
+        }
+        acceptedActions.add(new CompletedHandAction(
+                acceptedActions.size() + 1,
+                turnId,
+                player.id(),
+                phase,
+                action.type(),
+                result.paid(),
+                player.stack(),
+                player.streetBet(),
+                result.currentBet(),
+                result.fullRaise()
+        ));
+    }
+
+    private CompletedHandPlayer completedPlayer(Player player) {
+        int winnings = awards.stream()
+                .map(PotAward::winnings)
+                .mapToInt(winners -> winners.getOrDefault(player.id(), 0))
+                .sum();
+        int startingStack = Math.toIntExact(
+                (long) player.stack() + player.totalContribution() - winnings
+        );
+        boolean showdown = showdownPlayerIds.contains(player.id());
+        return new CompletedHandPlayer(
+                player.id(),
+                player.name(),
+                player.seat(),
+                startingStack,
+                player.stack(),
+                player.totalContribution(),
+                winnings,
+                player.isFolded(),
+                player.isDisconnected(),
+                player.stack() == 0,
+                showdown,
+                showdown ? showdownHandKeys.get(player.id()) : null,
+                showdown ? showdownCategories.get(player.id()) : null,
+                player.holeCards()
+        );
     }
 
     private void transitionTo(GamePhase next) {
@@ -454,6 +517,27 @@ public final class Hand {
     public List<Card> communityCards() { return List.copyOf(communityCards); }
     public List<Player> participants() { return List.copyOf(participants); }
     public List<PotAward> awards() { return awards; }
+
+    CompletedHandSnapshot completedSnapshot(String sessionId) {
+        if (completedPlayers.isEmpty() || phase != GamePhase.ROUND_END) {
+            throw new IllegalStateException("hand has not completed");
+        }
+        return new CompletedHandSnapshot(
+                sessionId,
+                id,
+                config,
+                buttonSeat,
+                smallBlindSeat,
+                bigBlindSeat,
+                potAmount(),
+                communityCards,
+                settledPots,
+                awards,
+                completedPlayers,
+                acceptedActions,
+                actionHistoryComplete
+        );
+    }
 
     public Set<ActionType> legalActions(String playerId) {
         return actionOptions(playerId).legalActions();

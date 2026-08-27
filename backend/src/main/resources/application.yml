@@ -1,8 +1,23 @@
 spring:
   application:
     name: xidao-poker
+  # 历史模块使用可重试的按需迁移，禁止 Boot 在启动线程中抢先连接 PostgreSQL。
+  flyway:
+    enabled: false
 
 poker:
+  persistence:
+    enabled: false
+    writer-threads: 2
+    queue-capacity: 256
+    maximum-attempts: 3
+    initial-retry-backoff: 250ms
+    shutdown-wait: 10s
+    database:
+      jdbc-url: ""
+      username: ""
+      password: ""
+      maximum-pool-size: 4
   network:
     disconnect-grace: 30s
     maximum-text-message-bytes: 16384

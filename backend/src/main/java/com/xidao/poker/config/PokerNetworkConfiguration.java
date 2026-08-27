@@ -2,6 +2,7 @@ package com.xidao.poker.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xidao.poker.application.room.GameApplicationService;
+import com.xidao.poker.application.history.HandHistoryPublisher;
 import com.xidao.poker.application.room.RoomDeliverySink;
 import com.xidao.poker.application.room.RoomEventDispatcher;
 import com.xidao.poker.application.room.RoomRegistry;
@@ -63,9 +64,10 @@ public class PokerNetworkConfiguration {
     @Bean
     public GameApplicationService gameApplicationService(
             RoomRegistry registry,
-            RoomEventDispatcher dispatcher
+            RoomEventDispatcher dispatcher,
+            HandHistoryPublisher historyPublisher
     ) {
-        return new GameApplicationService(registry, dispatcher);
+        return new GameApplicationService(registry, dispatcher, historyPublisher);
     }
 
     @Bean(name = "disconnectTaskScheduler")

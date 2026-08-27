@@ -1,0 +1,7 @@
+poker:
+  persistence:
+    enabled: true
+    database:
+      jdbc-url: ${POKER_DB_URL}
+      username: ${POKER_DB_USERNAME}
+      password: ${POKER_DB_PASSWORD}

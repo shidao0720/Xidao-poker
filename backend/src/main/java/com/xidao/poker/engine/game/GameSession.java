@@ -5,6 +5,7 @@ import com.xidao.poker.engine.action.IllegalActionException;
 import com.xidao.poker.engine.action.PlayerAction;
 import com.xidao.poker.engine.event.GameEvent;
 import com.xidao.poker.engine.event.GameEventType;
+import com.xidao.poker.engine.history.CompletedHandSnapshot;
 import com.xidao.poker.engine.player.Player;
 import com.xidao.poker.engine.snapshot.ActionOptions;
 import com.xidao.poker.engine.snapshot.GameSnapshot;
@@ -365,6 +366,12 @@ public final class GameSession {
 
     public synchronized long lastSequence() {
         return sequence;
+    }
+
+    /** 已结算手牌的敏感内部投影；网络层不得调用或序列化。 */
+    public synchronized CompletedHandSnapshot completedHandSnapshot() {
+        if (currentHand == null) throw new IllegalStateException("no hand has been created");
+        return currentHand.completedSnapshot(id);
     }
 
     public String id() { return id; }

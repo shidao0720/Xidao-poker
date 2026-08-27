@@ -16,8 +16,8 @@ public class RoomApplicationConfiguration {
     }
 
     @Bean
-    public RoomRegistry roomRegistry() {
-        return new RoomRegistry();
+    public RoomRegistry roomRegistry(Clock pokerClock) {
+        return new RoomRegistry(pokerClock);
     }
 
     @Bean

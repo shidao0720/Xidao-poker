@@ -3,6 +3,7 @@ package com.xidao.poker.application.room;
 import com.xidao.poker.application.command.PlayerActionCommand;
 import com.xidao.poker.application.command.StartGameCommand;
 import com.xidao.poker.application.command.TurnTimeoutCommand;
+import com.xidao.poker.application.history.CompletedHandArchive;
 import com.xidao.poker.engine.action.ActionErrorCode;
 import com.xidao.poker.engine.action.ActionType;
 import com.xidao.poker.engine.action.IllegalActionException;
@@ -12,7 +13,11 @@ import com.xidao.poker.engine.event.GameEventType;
 import com.xidao.poker.engine.game.GameConfig;
 import com.xidao.poker.engine.game.GameSession;
 import com.xidao.poker.engine.snapshot.GameSnapshot;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -31,12 +36,15 @@ import java.util.concurrent.locks.ReentrantLock;
  * 所有德州扑克规则仍只由 GameSession 裁决。
  */
 public final class RoomRuntime {
+    private static final Logger log = LoggerFactory.getLogger(RoomRuntime.class);
+
     public static final int DEFAULT_REPLAY_EVENTS = 512;
     public static final int DEFAULT_COMMAND_CACHE = 1_024;
     public static final int DEFAULT_OUTBOX_DELIVERIES = 1_024;
 
     private final RoomMetadata metadata;
     private final GameSession gameSession;
+    private final Clock clock;
     private final ReentrantLock lock = new ReentrantLock(true);
     private final Map<String, MemberConnection> connections = new LinkedHashMap<>();
     private final Set<String> pendingRemoval = new LinkedHashSet<>();
@@ -47,6 +55,7 @@ public final class RoomRuntime {
     private final int replayCapacity;
     private final int commandCacheCapacity;
     private final int outboxCapacity;
+    private Instant currentHandStartedAt;
     private boolean closed;
 
     RoomRuntime(RoomMetadata metadata, GameConfig config, long baseSeed) {
@@ -56,22 +65,19 @@ public final class RoomRuntime {
                 baseSeed,
                 DEFAULT_REPLAY_EVENTS,
                 DEFAULT_COMMAND_CACHE,
-                DEFAULT_OUTBOX_DELIVERIES
+                DEFAULT_OUTBOX_DELIVERIES,
+                Clock.systemUTC()
         );
     }
 
     RoomRuntime(RoomMetadata metadata, GameConfig config) {
-        this(metadata, config, DEFAULT_REPLAY_EVENTS, DEFAULT_COMMAND_CACHE, DEFAULT_OUTBOX_DELIVERIES);
+        this(metadata, config, null, DEFAULT_REPLAY_EVENTS, DEFAULT_COMMAND_CACHE,
+                DEFAULT_OUTBOX_DELIVERIES, Clock.systemUTC());
     }
 
-    private RoomRuntime(
-            RoomMetadata metadata,
-            GameConfig config,
-            int replayCapacity,
-            int commandCacheCapacity,
-            int outboxCapacity
-    ) {
-        this(metadata, config, null, replayCapacity, commandCacheCapacity, outboxCapacity);
+    RoomRuntime(RoomMetadata metadata, GameConfig config, Clock clock) {
+        this(metadata, config, null, DEFAULT_REPLAY_EVENTS, DEFAULT_COMMAND_CACHE,
+                DEFAULT_OUTBOX_DELIVERIES, clock);
     }
 
     RoomRuntime(
@@ -82,7 +88,21 @@ public final class RoomRuntime {
             int commandCacheCapacity,
             int outboxCapacity
     ) {
-        this(metadata, config, Long.valueOf(baseSeed), replayCapacity, commandCacheCapacity, outboxCapacity);
+        this(metadata, config, Long.valueOf(baseSeed), replayCapacity, commandCacheCapacity,
+                outboxCapacity, Clock.systemUTC());
+    }
+
+    RoomRuntime(
+            RoomMetadata metadata,
+            GameConfig config,
+            long baseSeed,
+            int replayCapacity,
+            int commandCacheCapacity,
+            int outboxCapacity,
+            Clock clock
+    ) {
+        this(metadata, config, Long.valueOf(baseSeed), replayCapacity, commandCacheCapacity,
+                outboxCapacity, clock);
     }
 
     private RoomRuntime(
@@ -91,7 +111,8 @@ public final class RoomRuntime {
             Long deterministicSeed,
             int replayCapacity,
             int commandCacheCapacity,
-            int outboxCapacity
+            int outboxCapacity,
+            Clock clock
     ) {
         if (metadata == null) throw new IllegalArgumentException("room metadata is required");
         if (config == null) throw new IllegalArgumentException("game config is required");
@@ -100,6 +121,7 @@ public final class RoomRuntime {
         if (outboxCapacity < config.maxPlayers()) {
             throw new IllegalArgumentException("outbox must fit one snapshot per room member");
         }
+        if (clock == null) throw new IllegalArgumentException("clock is required");
         this.metadata = metadata;
         this.gameSession = deterministicSeed == null
                 ? new GameSession(metadata.roomId(), config)
@@ -107,6 +129,7 @@ public final class RoomRuntime {
         this.replayCapacity = replayCapacity;
         this.commandCacheCapacity = commandCacheCapacity;
         this.outboxCapacity = outboxCapacity;
+        this.clock = clock;
     }
 
     RoomExecutionResult join(
@@ -571,7 +594,27 @@ public final class RoomRuntime {
             boolean ignored
     ) {
         List<GameEvent> events = new ArrayList<>(initialEvents);
+        Instant commandTime = Instant.now(clock);
+        if (events.stream().anyMatch(event -> event.type() == GameEventType.HAND_STARTED)) {
+            currentHandStartedAt = commandTime;
+        }
+        List<CompletedHandArchive> completedHands = List.of();
         if (events.stream().anyMatch(event -> event.type() == GameEventType.HAND_ENDED)) {
+            Instant startedAt = currentHandStartedAt == null ? commandTime : currentHandStartedAt;
+            try {
+                completedHands = List.of(new CompletedHandArchive(
+                        metadata.roomName(),
+                        metadata.createdAt(),
+                        startedAt,
+                        commandTime,
+                        gameSession.completedHandSnapshot()
+                ));
+            } catch (RuntimeException error) {
+                log.error("HAND_HISTORY_CAPTURE_FAILED roomId={} handId={} code={}",
+                        metadata.roomId(), gameSession.currentHandId(),
+                        error.getClass().getSimpleName(), error);
+            }
+            currentHandStartedAt = null;
             removePlayersWaitingForHandEnd(events);
         }
         appendRecentEvents(events);
@@ -606,7 +649,8 @@ public final class RoomRuntime {
                 connectionEpoch,
                 gameSession.lastSequence(),
                 events,
-                requesterSnapshot
+                requesterSnapshot,
+                completedHands
         );
     }
 
@@ -677,7 +721,8 @@ public final class RoomRuntime {
                 connection == null ? 0 : connection.epoch(),
                 gameSession.lastSequence(),
                 List.of(),
-                snapshot
+                snapshot,
+                List.of()
         );
     }
 
@@ -688,7 +733,8 @@ public final class RoomRuntime {
                 result.connectionEpoch(),
                 result.lastSequence(),
                 result.events(),
-                null
+                null,
+                result.completedHands()
         );
     }
 
