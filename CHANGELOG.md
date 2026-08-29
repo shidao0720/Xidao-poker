@@ -8,6 +8,13 @@
 
 ### Added
 
+- 添加前后端同端口 LAN 发布模式：React 生产资源随 Spring Boot JAR 打包，页面、`/api` 与 `/ws` 统一由应用端口提供。
+- 添加 `lan-build.bat`、`lan-start.bat` 和 Docker 一键启动入口，第二台局域网设备可直接访问启动日志列出的地址。
+- 添加受限 SPA 路由回退，仅将牌桌页面路由转发到 `index.html`，明确排除 `/api`、`/ws` 与静态资源路径。
+- 添加多网卡 LAN IPv4 枚举与候选排序，启动时列出全部可用地址并降低 VPN、容器及虚拟网卡优先级。
+- 添加多阶段生产镜像与 `compose.lan.yml`；PostgreSQL 不映射宿主机端口，并隔离在 Docker 内部网络。
+- 添加协议版本与构建版本握手校验，客户端请求和服务端信封均携带版本元数据，避免旧缓存前端静默连接不兼容后端。
+- 将 16 条 LAN Hardening Constraints 纳入开发约束，覆盖房间串行化、计时器防陈旧、状态正交、幂等、安全快照、日志与筹码守恒等要求。
 - 为正式牌桌行动按钮加入预览方案中的点击爆光反馈：弃牌使用赤红斩光、过牌使用蓝色波光、跟注使用金色放射光，Bet / Raise 使用青蓝灵子光，并与后续筹码飞行动画并行播放。
 - 初始化 Java 21、Spring Boot 3 和 Maven 后端工程。
 - 添加 Spring Boot 应用入口，使 `mvn verify` 能够生成可执行 Jar。
@@ -15,7 +22,7 @@
 - 实现五张牌牌型判断与七选五最优组合选择。
 - 支持 High Card、Pair、Two Pair、Three of a Kind、Straight、Flush、Full House、Four of a Kind 和 Straight Flush。
 - 实现 `A-2-3-4-5` Wheel 顺子和完整 kicker 比较。
-- 引入统一玩家生命周期 `PlayerStatus`。
+- 将玩家状态拆分为 `ConnectionStatus`、`SeatStatus` 与 `HandStatus` 三个正交维度；`PlayerStatus` 仅保留为旧 UI 兼容投影。
 - 实现 Check、Call、Bet、Raise、Fold 和 All-in 的基础下注轮转。
 - 实现最小加注与 Short All-in 不重新开放加注权的规则。
 - 新增统一 `ActionValidator`、稳定错误码和非法行动无副作用约束。
@@ -26,7 +33,7 @@
 - 添加房主掉线转移、玩家重连、破产淘汰和中途加入观察者流程。
 - 添加 `RoomRuntime`、`RoomRegistry`、`RoomService` 与 `GameApplicationService`，隔离网络层和纯 Java 引擎。
 - 添加房间级公平锁和共享 Executor 驱动的单房间有序发送队列。
-- 添加 `commandId` 幂等缓存、连接 ID / epoch 校验、`handId` / `turnId` 防延迟行动与旧手牌开始命令保护。
+- 添加 `requestId` 幂等缓存、连接 ID / epoch 校验、`handId` / `turnId` 防延迟行动与旧手牌开始命令保护。
 - 添加默认保留 512 个事件的有限回放窗口、1,024 条命令缓存和 1,024 条出站消息上限。
 - 添加服务端 `ActionOptions`，提供跟注额、最小 Bet / Raise-to 与最大下注范围。
 - 添加重连时主动生成的查看者专属 `GameSnapshot`、精确连接 ID / epoch 绑定，以及广播失败后的完整快照恢复。
@@ -34,16 +41,18 @@
 - 添加 `/ws/poker` 原生 WebSocket 适配器以及统一客户端/服务端消息信封。
 - 添加 WebSocket 握手身份绑定、32 字节随机重连令牌、成功重连令牌轮换和旧 Socket 关闭。
 - 添加默认 30 秒断线宽限调度；过期任务通过连接 epoch 防止删除新连接。
+- 添加统一 `RoomTimerCommand` 模型，将断线到期、回合超时和空房清理全部送入同一个房间串行执行路径，并使用 `roomId + handId + turnId` 拒绝陈旧任务。
+- 添加默认 30 秒服务端回合计时器；超时后只依据服务端 `legalActions()` 自动 Check 或 Fold。
 - 添加同源 WebSocket 默认策略、可配置可信 Origin、16 KiB 消息上限与并发发送保护。
 - 添加仅供服务端历史归档使用的 `CompletedHandSnapshot`，保存所有参与者私有牌、起止筹码、投入、奖金、底池和摊牌结果，不复用网络查看者 Snapshot。
 - 添加应用层 `HandHistoryPublisher` / `HandHistoryRepository` 端口、默认 256 容量的有界异步队列、重试退避和优雅关闭。
 - 添加 PostgreSQL 历史适配器和 Flyway V1 迁移，覆盖 `game_record`、`poker_user`、`hand_history`、`hand_player`、`game_action` 与 `player_statistic`。
 - 添加 `(game_id, hand_id)` 幂等保存、整手事务、JSONB 公共牌 / 底池 / 奖金 / 私有牌以及玩家统计更新。
 - 添加 `postgres` Profile 与环境变量数据库配置；默认关闭历史持久化，启用后数据库离线也不会阻止实时 Web 服务启动。
-- 添加 Testcontainers PostgreSQL 16 合约测试，在 Docker 可用时验证迁移、JSONB、重复写入和子记录失败后的事务回滚。
+- 添加 Testcontainers PostgreSQL 16 合约测试，验证迁移、JSONB、重复写入和子记录失败后的事务回滚；升级 Testcontainers 至 1.21.4 以兼容较新的 Docker Engine API。
 - 添加 SLF4J 结构化应用命令日志和发送失败日志。
 - 正式建房与连续手牌使用 `SecureRandom` 洗牌，同时保留仅供测试的确定性 seed 入口。
-- 添加 122 项引擎、房间应用层、HTTP/WebSocket、历史持久化与故障恢复测试，包括真实 Tomcat WebSocket 升级、PostgreSQL 合约测试和 200 组确定性随机边池守恒场景。
+- 添加 135 项引擎、房间应用层、HTTP/WebSocket、同端口发布、历史持久化与故障恢复测试，包括真实 Tomcat WebSocket 升级、PostgreSQL 合约测试、200 组确定性随机边池场景和 1,000 手自动对局不变量验证。
 - 添加项目 README，记录架构决策、工程取舍、调试策略、测试策略与 Git 工作流。
 - 添加 MIT License。
 - 添加 GitHub Actions CI，自动运行后端 Maven Test，并预留默认跳过的前端 Job。
@@ -58,6 +67,9 @@
 
 ### Changed
 
+- 生产前端固定使用同源相对 `/api` 与 `/ws` 地址，不再允许把 localhost 或局域网 IP 编译进前端产物；Vite 的 localhost 代理仅用于开发模式。
+- 空房间清理期限由 20 秒调整为 45 秒，并在启动时校验其严格长于 30 秒重连宽限，避免重连等待中的玩家被误判为空房。
+- 明确持久点数仅为 play-money，不具备现金价值，不支持充值、提现、实物兑换或玩家间转账。
 - Fate 胜负裁决播报最长保留 5 秒，玩家可随时点击右上角关闭并立即进入筹码分发；下注与结算筹码粒子延长单颗飞行时间，并在完整动画周期内等间隔逐颗发射，形成连续筹码流。
 - 重排 Fate 结算赢家栏：左侧保留赢家身份，右侧直接展示牌型和服务端评估出的最佳五张组合，并逐张标明来自手牌或公共牌；未摊牌结算则在同一区域展示公开手牌。
 - 跟注/下注/加注到总底池、总底池到赢家筹码框的粒子轨迹改为 GPU 加速的连续直线位移，移除中途弧线关键帧和数字结算缓动，使粒子与筹码数字从起点到终点持续运动。

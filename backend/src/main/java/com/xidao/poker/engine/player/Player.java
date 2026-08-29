@@ -20,8 +20,9 @@ public final class Player {
     private int totalContribution;
     private boolean hasActed;
     private boolean ready;
-    private PlayerStatus status;
-    private PlayerStatus statusBeforeDisconnect;
+    private ConnectionStatus connectionStatus;
+    private SeatStatus seatStatus;
+    private HandStatus handStatus;
 
     public Player(String id, String name, int seat, int stack) {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("player id is required");
@@ -32,7 +33,9 @@ public final class Player {
         this.name = name;
         this.seat = seat;
         this.stack = stack;
-        this.status = stack == 0 ? PlayerStatus.SPECTATOR : PlayerStatus.ACTIVE;
+        this.connectionStatus = ConnectionStatus.CONNECTED;
+        this.seatStatus = stack == 0 ? SeatStatus.BUSTED : SeatStatus.SEATED;
+        this.handStatus = HandStatus.NOT_IN_HAND;
     }
 
     public void beginHand() {
@@ -40,23 +43,20 @@ public final class Player {
         streetBet = 0;
         totalContribution = 0;
         hasActed = false;
-        if (status == PlayerStatus.DISCONNECTED) {
-            statusBeforeDisconnect = stack == 0 ? PlayerStatus.BUSTED : PlayerStatus.ACTIVE;
-        } else {
-            status = stack == 0 ? PlayerStatus.BUSTED : PlayerStatus.ACTIVE;
-        }
+        seatStatus = stack == 0 ? SeatStatus.BUSTED : SeatStatus.SEATED;
+        handStatus = stack == 0 ? HandStatus.NOT_IN_HAND : HandStatus.ACTIVE;
     }
 
     /** 将有筹码的等待玩家或观察者加入下一手；不会恢复仍处于离线状态的玩家。 */
     public void activateForNextHand() {
-        if (status == PlayerStatus.DISCONNECTED) {
+        if (connectionStatus == ConnectionStatus.DISCONNECTED) {
             throw new IllegalStateException("disconnected player cannot join a hand");
         }
         if (stack <= 0) {
-            status = PlayerStatus.BUSTED;
+            seatStatus = SeatStatus.BUSTED;
             throw new IllegalStateException("player has no chips");
         }
-        status = PlayerStatus.ACTIVE;
+        seatStatus = SeatStatus.SEATED;
     }
 
     public void beginStreet() {
@@ -70,7 +70,7 @@ public final class Player {
         stack -= paid;
         streetBet = Math.addExact(streetBet, paid);
         totalContribution = Math.addExact(totalContribution, paid);
-        if (stack == 0) status = PlayerStatus.ALL_IN;
+        if (stack == 0) handStatus = HandStatus.ALL_IN;
         return paid;
     }
 
@@ -91,33 +91,49 @@ public final class Player {
     public int stack() { return stack; }
     public int streetBet() { return streetBet; }
     public int totalContribution() { return totalContribution; }
-    public PlayerStatus status() { return status; }
+    public PlayerStatus status() {
+        if (connectionStatus == ConnectionStatus.DISCONNECTED) return PlayerStatus.DISCONNECTED;
+        if (seatStatus == SeatStatus.BUSTED) return PlayerStatus.BUSTED;
+        if (seatStatus == SeatStatus.SPECTATOR && handStatus == HandStatus.NOT_IN_HAND) {
+            return PlayerStatus.SPECTATOR;
+        }
+        return switch (handStatus) {
+            case ACTIVE -> PlayerStatus.ACTIVE;
+            case FOLDED -> PlayerStatus.FOLDED;
+            case ALL_IN -> PlayerStatus.ALL_IN;
+            case NOT_IN_HAND -> seatStatus == SeatStatus.SPECTATOR
+                    ? PlayerStatus.SPECTATOR
+                    : PlayerStatus.ACTIVE;
+        };
+    }
+    public ConnectionStatus connectionStatus() { return connectionStatus; }
+    public SeatStatus seatStatus() { return seatStatus; }
+    public HandStatus handStatus() { return handStatus; }
     public boolean hasActed() { return hasActed; }
     public boolean ready() { return ready; }
     public List<Card> holeCards() { return Collections.unmodifiableList(holeCards); }
 
     public boolean canAct() {
-        return status == PlayerStatus.ACTIVE;
+        return connectionStatus == ConnectionStatus.CONNECTED
+                && seatStatus == SeatStatus.SEATED
+                && handStatus == HandStatus.ACTIVE;
     }
 
     public boolean isInHand() {
-        PlayerStatus effective = effectiveStatus();
-        return effective == PlayerStatus.ACTIVE || effective == PlayerStatus.ALL_IN;
+        return handStatus == HandStatus.ACTIVE || handStatus == HandStatus.ALL_IN;
     }
 
     public boolean isFolded() {
-        return effectiveStatus() == PlayerStatus.FOLDED;
+        return handStatus == HandStatus.FOLDED;
     }
 
     public void fold() {
-        requireStatus(PlayerStatus.ACTIVE, "only an active player can fold");
-        status = PlayerStatus.FOLDED;
+        if (!canAct()) throw new IllegalStateException("only an active player can fold");
+        handStatus = HandStatus.FOLDED;
     }
 
     public void disconnect() {
-        if (status == PlayerStatus.DISCONNECTED) return;
-        statusBeforeDisconnect = status;
-        status = PlayerStatus.DISCONNECTED;
+        connectionStatus = ConnectionStatus.DISCONNECTED;
     }
 
     /**
@@ -125,63 +141,44 @@ public final class Player {
      * 这样既能在 30 秒内重连，也不会占住行动指针或继续争夺尚未跟平的底池。
      */
     public void disconnectAndForfeitHand() {
-        if (status == PlayerStatus.DISCONNECTED) {
-            if (statusBeforeDisconnect == PlayerStatus.ACTIVE) {
-                statusBeforeDisconnect = PlayerStatus.FOLDED;
-            }
-            return;
-        }
-        statusBeforeDisconnect = status == PlayerStatus.ACTIVE ? PlayerStatus.FOLDED : status;
-        status = PlayerStatus.DISCONNECTED;
+        if (handStatus == HandStatus.ACTIVE) handStatus = HandStatus.FOLDED;
+        connectionStatus = ConnectionStatus.DISCONNECTED;
     }
 
     public void reconnect() {
-        requireStatus(PlayerStatus.DISCONNECTED, "player is not disconnected");
-        status = statusBeforeDisconnect == null ? PlayerStatus.SPECTATOR : statusBeforeDisconnect;
-        statusBeforeDisconnect = null;
+        if (connectionStatus != ConnectionStatus.DISCONNECTED) {
+            throw new IllegalStateException("player is not disconnected");
+        }
+        connectionStatus = ConnectionStatus.CONNECTED;
     }
 
     public void markBusted() {
-        status = PlayerStatus.BUSTED;
+        seatStatus = SeatStatus.BUSTED;
     }
 
     public void becomeSpectator() {
-        status = PlayerStatus.SPECTATOR;
+        seatStatus = SeatStatus.SPECTATOR;
     }
 
     /** 一手结束后清理手内状态，同时保留离线生命周期供重连。 */
     public void finishHand() {
-        PlayerStatus next = stack == 0 ? PlayerStatus.BUSTED : PlayerStatus.ACTIVE;
-        if (status == PlayerStatus.DISCONNECTED) {
-            statusBeforeDisconnect = next;
-        } else {
-            status = next;
-            statusBeforeDisconnect = null;
-        }
+        if (stack == 0) seatStatus = SeatStatus.BUSTED;
+        else if (seatStatus != SeatStatus.SPECTATOR) seatStatus = SeatStatus.SEATED;
+        handStatus = HandStatus.NOT_IN_HAND;
         hasActed = false;
         streetBet = 0;
     }
 
     public boolean isDisconnected() {
-        return status == PlayerStatus.DISCONNECTED;
+        return connectionStatus == ConnectionStatus.DISCONNECTED;
     }
 
     public boolean isSpectator() {
-        return effectiveStatus() == PlayerStatus.SPECTATOR;
+        return seatStatus == SeatStatus.SPECTATOR;
     }
 
     public boolean isBusted() {
-        return effectiveStatus() == PlayerStatus.BUSTED;
-    }
-
-    private PlayerStatus effectiveStatus() {
-        return status == PlayerStatus.DISCONNECTED && statusBeforeDisconnect != null
-                ? statusBeforeDisconnect
-                : status;
-    }
-
-    private void requireStatus(PlayerStatus expected, String message) {
-        if (status != expected) throw new IllegalStateException(message);
+        return seatStatus == SeatStatus.BUSTED;
     }
 
     public void setHasActed(boolean hasActed) { this.hasActed = hasActed; }

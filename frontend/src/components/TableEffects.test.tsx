@@ -32,12 +32,14 @@ function settledSnapshot(): GameSnapshot {
     players: [
       {
         id: 'winner', name: 'Alice', seat: 0, stack: 1_015, streetBet: 0,
-        totalContribution: 15, status: 'ACTIVE', inHand: true, canAct: false,
+        totalContribution: 15, status: 'ACTIVE', connectionStatus: 'CONNECTED',
+        seatStatus: 'SEATED', handStatus: 'NOT_IN_HAND', inHand: true, canAct: false,
         ready: true, holeCards: [{ rank: 'ACE', suit: 'SPADES' }, { rank: 'ACE', suit: 'HEARTS' }],
       },
       {
         id: 'loser', name: 'Bob', seat: 1, stack: 985, streetBet: 0,
-        totalContribution: 15, status: 'ACTIVE', inHand: true, canAct: false,
+        totalContribution: 15, status: 'ACTIVE', connectionStatus: 'CONNECTED',
+        seatStatus: 'SEATED', handStatus: 'NOT_IN_HAND', inHand: true, canAct: false,
         ready: true, holeCards: [],
       },
     ],

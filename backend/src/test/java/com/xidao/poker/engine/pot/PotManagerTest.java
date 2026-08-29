@@ -272,6 +272,8 @@ class PotManagerTest {
     }
 
     private static Player player(String id, int seat, int stack) {
-        return new Player(id, id, seat, stack);
+        Player player = new Player(id, id, seat, stack);
+        player.beginHand();
+        return player;
     }
 }

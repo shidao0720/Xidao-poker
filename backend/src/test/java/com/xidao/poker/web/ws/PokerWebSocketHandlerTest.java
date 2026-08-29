@@ -9,6 +9,7 @@ import com.xidao.poker.application.room.RoomRegistry;
 import com.xidao.poker.application.room.RoomService;
 import com.xidao.poker.config.PokerNetworkProperties;
 import com.xidao.poker.engine.game.GameConfig;
+import com.xidao.poker.web.protocol.ProtocolCompatibility;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -31,6 +32,44 @@ import static org.mockito.Mockito.when;
 
 class PokerWebSocketHandlerTest {
     @Test
+    void rejectsIncompatibleProtocolBeforeJoiningRoom() throws Exception {
+        ObjectMapper objectMapper = JsonMapper.builder().findAndAddModules().build();
+        RoomRegistry rooms = new RoomRegistry();
+        new RoomService(rooms, Clock.systemUTC()).createRoom(
+                "room", "LAN", new GameConfig(5, 10, 1_000, 10)
+        );
+        WebSocketConnectionRegistry connections = new WebSocketConnectionRegistry(10_000, 1_048_576);
+        PokerWebSocketHandler handler = new PokerWebSocketHandler(
+                new GameApplicationService(
+                        rooms,
+                        new RoomEventDispatcher(
+                                rooms,
+                                new WebSocketRoomDeliverySink(connections, objectMapper),
+                                Runnable::run
+                        )
+                ),
+                connections,
+                mock(DisconnectGraceScheduler.class),
+                objectMapper,
+                new PokerNetworkProperties(Duration.ofSeconds(30), Duration.ofSeconds(30), 16_384, 10_000, 1_048_576, List.of())
+        );
+        CapturedSession incompatible = capturedSession(
+                "socket-old",
+                new PokerHandshakeRequest(
+                        "room", "A", "Alice", null, null,
+                        ProtocolCompatibility.CURRENT_PROTOCOL_VERSION + 1,
+                        ProtocolCompatibility.currentBuildVersion()
+                )
+        );
+
+        handler.afterConnectionEstablished(incompatible.session());
+
+        JsonNode error = lastMessageOfType(objectMapper, incompatible.messages(), "ERROR");
+        assertThat(error.path("payload").path("code").asText()).isEqualTo("PROTOCOL_VERSION_MISMATCH");
+        assertThat(connections.currentIdentity("socket-old")).isEmpty();
+    }
+
+    @Test
     void completeHandshakeAndStartHandKeepsHoleCardsViewerSpecific() throws Exception {
         ObjectMapper objectMapper = JsonMapper.builder().findAndAddModules().build();
         RoomRegistry rooms = new RoomRegistry();
@@ -47,7 +86,7 @@ class PokerWebSocketHandlerTest {
                 connections,
                 disconnects,
                 objectMapper,
-                new PokerNetworkProperties(Duration.ofSeconds(30), 16_384, 10_000, 1_048_576, List.of())
+                new PokerNetworkProperties(Duration.ofSeconds(30), Duration.ofSeconds(30), 16_384, 10_000, 1_048_576, List.of())
         );
 
         CapturedSession alice = session("socket-A", "A", "Alice");
@@ -101,13 +140,13 @@ class PokerWebSocketHandlerTest {
                 connections,
                 mock(DisconnectGraceScheduler.class),
                 objectMapper,
-                new PokerNetworkProperties(Duration.ofSeconds(30), 16_384, 10_000, 1_048_576, List.of())
+                new PokerNetworkProperties(Duration.ofSeconds(30), Duration.ofSeconds(30), 16_384, 10_000, 1_048_576, List.of())
         );
         CapturedSession alice = session("socket-A", "A", "Alice");
         handler.afterConnectionEstablished(alice.session());
 
         handler.handleMessage(alice.session(), new TextMessage(
-                "{\"type\":\"PLAYER_ACTION\",\"commandId\":\"bad\",\"payload\":{\"handId\":0}}"
+                "{\"type\":\"PLAYER_ACTION\",\"requestId\":\"bad\",\"payload\":{\"handId\":0}}"
         ));
 
         JsonNode error = lastMessageOfType(objectMapper, alice.messages(), "ERROR");
@@ -140,7 +179,7 @@ class PokerWebSocketHandlerTest {
                 connections,
                 disconnects,
                 objectMapper,
-                new PokerNetworkProperties(Duration.ofSeconds(30), 16_384, 10_000, 1_048_576, List.of())
+                new PokerNetworkProperties(Duration.ofSeconds(30), Duration.ofSeconds(30), 16_384, 10_000, 1_048_576, List.of())
         );
         CapturedSession original = session("socket-old", "A", "Alice");
         handler.afterConnectionEstablished(original.session());
@@ -165,7 +204,7 @@ class PokerWebSocketHandlerTest {
     }
 
     private TextMessage message(String type, String commandId, String payload) {
-        return new TextMessage("{\"type\":\"" + type + "\",\"commandId\":\"" + commandId
+        return new TextMessage("{\"type\":\"" + type + "\",\"requestId\":\"" + commandId
                 + "\",\"payload\":" + payload + "}");
     }
 

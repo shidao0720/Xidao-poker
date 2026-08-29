@@ -1,9 +1,7 @@
 import type { CreateRoomInput, RoomSummary } from '../types/protocol'
 
-const configuredBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? ''
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${configuredBase}${path}`, {
+  const response = await fetch(path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',

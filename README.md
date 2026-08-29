@@ -4,7 +4,7 @@
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：首个端到端 MVP 阶段。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连、PostgreSQL 手牌历史持久化，以及 React 大厅 / 等待房间 / 牌桌界面均已落地。真实多浏览器联调仍在开发中。
+> 当前状态：局域网端到端 MVP 已可联机运行。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连、服务端回合计时、PostgreSQL 手牌历史持久化，以及 React 大厅 / 等待房间 / 牌桌界面均已落地。
 
 ## 目标游戏流程
 
@@ -179,15 +179,17 @@ Lobby / Table / Action components
 
 这个边界可以避免上一手的下注额、手牌或行动标记污染下一手。
 
-### 6. 单一玩家生命周期状态
+### 6. 玩家状态采用三个正交维度
 
-玩家使用 `PlayerStatus` 表示生命周期，而不是组合多个可能互相冲突的布尔值：
+连接状态、座位状态和当前手状态分别建模，不能压缩成互斥的单一枚举：
 
 ```text
-ACTIVE / FOLDED / ALL_IN / DISCONNECTED / SPECTATOR / BUSTED
+ConnectionStatus: CONNECTED / DISCONNECTED
+SeatStatus:       SEATED / SPECTATOR / BUSTED
+HandStatus:       NOT_IN_HAND / ACTIVE / FOLDED / ALL_IN
 ```
 
-所有行动轮转统一依赖 `player.canAct()`。Folded、All-in、Disconnected、Spectator 和 Busted 玩家不会进入行动队列。
+`PlayerStatus` 只作为旧 UI 的兼容投影，不参与底层规则裁决。所有行动轮转统一依赖 `player.canAct()`，其条件为“已连接 + 有效座位 + 当前手 ACTIVE”；底池资格则只依赖当前手状态。因此 `DISCONNECTED + ALL_IN`、`SPECTATOR + ALL_IN` 等组合可以被正确表达，玩家离开连接或席位后仍不会丢失本手已经取得的底池资格。
 
 掉线不会被伪装成 `SPECTATOR`：
 
@@ -198,7 +200,9 @@ ACTIVE / FOLDED / ALL_IN / DISCONNECTED / SPECTATOR / BUSTED
 
 第一版引擎采用立即让掉线的可行动玩家退出当前手、但应用层继续保留座位的确定性语义。Spring WebSocket 层已实现默认 30 秒的共享断线定时器；旧连接的关闭事件和旧 epoch 定时任务都会被忽略。无论宽限期是否结束，`currentActor` 都不会停留在离线玩家身上。
 
-房间的真实成员数变为 0 后会记录空置起点，默认满 20 秒后由共享清理任务从大厅目录删除。20 秒内重新加入会重置该期限；清理时仍会在房间锁内复查成员、待移除玩家、出站队列和发送任务，避免与并发加入或尚未完成的离开广播竞态。普通断线仍先执行 30 秒重连保护，只有成员在宽限期后真正移除，才开始计算空房间 TTL。期限与扫描间隔可通过 `poker.room.empty-ttl` 和 `poker.room.cleanup-interval` 配置。
+WebSocket 命令、网络断线、断线宽限到期、回合超时和空房清理全部进入同一个 `RoomRuntime` 公平锁串行执行路径。计时任务只携带不可变的 `roomId + handId + turnId` 作用域；执行时重新校验当前房间版本，过期任务直接忽略。回合超时也只向应用层提交意图，最终由服务端 `legalActions()` 决定自动 Check 或 Fold，客户端不推断规则。默认回合时限可通过 `poker.network.turn-timeout` 调整。
+
+房间的真实成员数变为 0 后会记录空置起点，默认满 45 秒后由共享清理任务从大厅目录删除。重新加入会重置该期限；清理时仍会在房间锁内复查成员、待移除玩家、outbox 和发送任务，避免与并发加入或尚未完成的离开广播竞态。普通断线仍先执行 30 秒重连保护，等待重连的成员不算空房；启动时还会强制校验空房 TTL 必须严格长于重连宽限。期限与扫描间隔可通过 `poker.room.empty-ttl` 和 `poker.room.cleanup-interval` 配置。
 
 ### 7. 行动指针采用防卡局硬约束
 
@@ -236,12 +240,12 @@ currentActor != null  →  currentActor.canAct() == true
 客户端命令信封必须携带：
 
 ```text
-commandId + playerId（由连接绑定，不信任消息体）
+requestId + playerId（由连接绑定，不信任消息体）
 connectionId + connectionEpoch
 handId + turnId（行动命令）
 ```
 
-- `commandId` 防止同一请求因重试重复扣筹码。
+- `requestId` 防止同一请求因重试重复扣筹码；服务端内部将其作为命令幂等键。
 - `connectionId + epoch` 拒绝被刷新页面替换的旧 Socket。
 - `handId + turnId` 即使在命令缓存淘汰后，也能拒绝延迟到下一回合或下一手的行动。
 - 开始游戏命令绑定客户端看到的上一手 ID，防止延迟的 `START_GAME` 意外开启后续牌局。
@@ -282,16 +286,16 @@ handId + turnId（行动命令）
 }
 ```
 
-WebSocket 入口为 `/ws/poker`。首次加入使用：
+WebSocket 入口为同源 `/ws/poker`。首次加入握手包含协议与构建版本：
 
 ```text
-ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&playerName=<url-encoded-name>
+<current-origin>/ws/poker?roomId=<roomId>&playerId=<playerId>&playerName=<name>&protocolVersion=1&buildVersion=0.1.0
 ```
 
 服务端会定向返回 `CONNECTION_READY` 和 `ROOM_SNAPSHOT`；客户端保存其中的 `connectionEpoch` 与 `resumeToken`。重连时使用：
 
 ```text
-ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&connectionEpoch=<epoch>&resumeToken=<token>
+<current-origin>/ws/poker?roomId=<roomId>&playerId=<playerId>&connectionEpoch=<epoch>&resumeToken=<token>&protocolVersion=1&buildVersion=0.1.0
 ```
 
 成功重连会递增 epoch、轮换 token、关闭旧 Socket，并主动推送新的查看者专属 Snapshot。token 只存在于网络适配层，不进入 Engine 或日志；旧 token、旧 epoch、旧连接发送的消息都会被拒绝。
@@ -303,7 +307,7 @@ ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&connectionEpoch
 ```json
 {
   "type": "PLAYER_ACTION",
-  "commandId": "client-generated-uuid",
+  "requestId": "client-generated-uuid",
   "payload": {
     "handId": 12,
     "turnId": 38,
@@ -315,7 +319,7 @@ ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&connectionEpoch
 
 已实现的客户端消息为 `READY`、`START_GAME`、`PLAYER_ACTION`、`REQUEST_SNAPSHOT`、`REPLAY_EVENTS`、`LEAVE` 和 `PING`。`roomId`、`playerId`、`connectionId` 与 epoch 全部取自握手绑定，消息体不能覆盖身份。
 
-服务端直接使用稳定的 `GameEventType` 作为事件名称，并额外提供 `CONNECTION_READY`、`COMMAND_RESULT`、`ROOM_SNAPSHOT`、`EVENT_REPLAY`、`ERROR` 和 `PONG`。当前行动者的合法操作与金额边界通过 Snapshot 内的 `actionOptions` 提供，不存在由前端自行计算的 `ACTION_REQUEST` 状态源。
+服务端直接使用稳定的 `GameEventType` 作为事件名称，并额外提供 `CONNECTION_READY`、`COMMAND_RESULT`、`ROOM_SNAPSHOT`、`EVENT_REPLAY`、`ERROR` 和 `PONG`。每个服务端信封携带 `protocolVersion` 和 `buildVersion`；不兼容握手会在加入房间前被拒绝，前端收到不同发布构建时会停止重连并提示刷新。当前行动者的合法操作与金额边界通过 Snapshot 内的 `actionOptions` 提供，不存在由前端自行计算的 `ACTION_REQUEST` 状态源。
 
 非法行动不会造成连接异常或部分状态修改。错误消息使用稳定 code，展示文案则允许后续调整：
 
@@ -323,7 +327,7 @@ ws://localhost:8080/ws/poker?roomId=<roomId>&playerId=<playerId>&connectionEpoch
 {
   "type": "ERROR",
   "roomId": "room-id",
-  "commandId": "client-generated-uuid",
+  "requestId": "client-generated-uuid",
   "payload": {
     "code": "INVALID_AMOUNT",
     "message": "raise amount is below the minimum"
@@ -391,7 +395,7 @@ Correctness → State Consistency → Debuggability → Features
 - Betting：Check、Call、Bet、Raise、Fold、Full Raise、Short All-in
 - Pot：Main Pot、多个 Side Pot、Folded contribution、Split Pot、奇数筹码
 - State Machine：合法转换与非法阶段操作
-- Player Lifecycle：Disconnect、Reconnect、Busted、Spectator
+- Player State：Connection / Seat / Hand 三维正交、Disconnect、Reconnect、Busted、Spectator、离线 All-in
 - Invariants：观察者、破产、弃牌、All-in 和离线玩家永远不会成为当前行动者
 - Application：连接 ID / epoch、防重复命令、过期 hand/turn、有限回放缓存、outbox 降级与定向快照隐私
 - History：完成手牌敏感投影、起止筹码核对、单手行动上限、有界异步队列、重试与关闭语义
@@ -410,6 +414,7 @@ Correctness → State Consistency → Debuggability → Features
 - 房主断线后的所有权转移
 - 10 人完整行动与筹码守恒
 - 短大盲、累计 Short All-in 和掉线后的 dead money 结算
+- 1,000 手确定性自动对局，逐行动检查筹码守恒、非负筹码和 `currentActor.canAct()`
 
 ### 故障测试
 
@@ -418,7 +423,7 @@ Correctness → State Consistency → Debuggability → Features
 - 非法 Raise 金额
 - 筹码不足
 - WebSocket 短暂断线与 30 秒内重连
-- 空房间满 20 秒批量清理、期限前不删除及重新加入后旧期限失效
+- 空房间满 45 秒批量清理、期限前不删除及重新加入后旧期限失效，并验证该期限严格长于 30 秒重连宽限
 - 客户端事件序号缺失后重新请求 Snapshot
 - 事件广播失败后自动回落为 viewer-specific Snapshot
 - PostgreSQL 暂时不可用时，进行中的牌局不被中断
@@ -442,7 +447,7 @@ npm run build
 
 前端状态同步测试重点锁定 Snapshot 整体替换、事件序号缺口、服务端行动投影，以及观察者/破产玩家不进入行动队列。测试数量会随开发持续增长，以本地验证和 CI 的实际结果为准。
 
-当前本地基线：后端发现 118 项测试，其中 116 项通过、2 项 PostgreSQL Testcontainers 测试因本机无 Docker 自动跳过；前端 12 项状态同步、连接错误、局域网 ID、代理 Origin 兼容性与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
+当前本地基线：后端 135 项测试全部通过且 0 跳过，其中 2 项通过 Docker/Testcontainers 对 PostgreSQL 16 执行真实迁移、幂等和事务回滚验证；前端 32 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
 
 ## Git 工作流
 
@@ -529,6 +534,39 @@ GitHub Actions 配置位于 `.github/workflows/ci.yml`：
 
 ## 本地开发环境
 
+### LAN 同端口发布（推荐联机方式）
+
+正式局域网联机不运行 Vite 开发服务器。React 先构建到 `frontend/dist`，随后 Maven 将这些文件打入 Spring Boot JAR；页面、`/api` 和 `/ws` 全部由同一个 `8080` 端口提供。
+
+Windows 源码构建并启动：
+
+```bat
+lan-build.bat
+lan-start.bat
+```
+
+若还没有 JAR，`lan-start.bat` 会先调用构建脚本。启动日志会输出所有可信私有 IPv4 候选，例如：
+
+```text
+LAN_ACCESS_URL interface=... url=http://192.168.10.231:8080
+```
+
+存在 Wi-Fi、网线、VPN 或虚拟网卡时会列出多个地址，不会盲目选择第一个；主机应把与玩家处于同一网络的地址发给其他人。玩家设备只需打开该地址。Windows 防火墙只应在“专用网络”中允许 Java 或 Docker 的应用端口，不应向公共网络开放。
+
+带 PostgreSQL 的 Docker 方式：
+
+```bat
+copy .env.lan.example .env.lan
+rem 修改 .env.lan 中的数据库密码
+lan-docker-start.bat
+```
+
+`compose.lan.yml` 只映射应用端口。PostgreSQL 没有宿主机 `ports` 映射，并位于内部 Docker 网络，局域网设备不能直接访问5432端口。
+
+直接刷新 `/rooms/{roomId}` 会由 Spring 转发到 `index.html`；`/api`、`/ws` 和 `/assets` 不参与 SPA 回退，缺失接口或资源仍返回404。
+
+### 开发模式
+
 当前开发环境要求：
 
 - JDK 21
@@ -569,7 +607,7 @@ npm ci
 npm run dev
 ```
 
-默认前端地址为 `http://localhost:5173`。Vite 会把同源 `/api` 和 `/ws` 代理到 `localhost:8080`，并重写 WebSocket Origin，因此本地开发无需把后端 Origin 白名单设置为 `*`。`npm run dev` 已监听 `0.0.0.0`；局域网内其他设备应访问开发机的可信内网 IP，并确保系统防火墙仅对可信局域网开放相应端口。`.env.example` 预留了独立后端地址；若以后让浏览器跨源直连，必须同时增加受限的 HTTP CORS 与 WebSocket Origin 配置，不能只修改前端变量，也不要提交私人 IP 或令牌。
+默认前端地址为 `http://localhost:5173`。Vite 会把同源 `/api` 和 `/ws` 代理到 `localhost:8080`，并重写 WebSocket Origin，因此本地开发无需把后端 Origin 白名单设置为 `*`。`npm run dev` 已监听 `0.0.0.0`。生产代码始终使用相对 `/api`、`/ws`，不支持通过环境变量写入 `localhost`、私人 IP 或跨源后端地址。
 
 ### 启用 PostgreSQL 历史持久化
 
@@ -669,14 +707,18 @@ Xidao-poker/
 - [x] React 大厅、等待房间和牌桌 MVP
 - [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
 - [x] WebSocket 30 秒宽限调度与 token / epoch 安全重连
+- [x] React / Spring Boot 同端口 LAN 发布、SPA 路由回退与多网卡地址提示
+- [x] Docker Compose 应用与内部 PostgreSQL 网络（数据库端口不向 LAN 映射）
+- [x] 协议版本与构建版本握手检测
 - [ ] 多浏览器重连联调
 - [ ] 多浏览器 10 人局域网联调
 - [x] Backend Maven Test CI（前端 Job 预留且默认跳过）
-- [ ] 容器化与首个 GitHub Release
+- [x] LAN 容器化构建
+- [ ] 首个 GitHub Release
 
 ## 安全与公平性说明
 
-本项目当前定位为局域网娱乐和工程实践，不涉及真钱、充值或提现。任何涉及真实资金的部署都会引入额外的法律、合规、安全与审计要求，不在当前范围内。
+本项目当前定位为局域网娱乐和工程实践。持久点数只能作为 play-money：不提供充值、提现、现金价值、实物兑换或玩家间转账。任何涉及真实资金的部署都会引入额外的法律、合规、安全与审计要求，不在当前范围内。
 
 请勿在 Issue、日志或提交中公开密码、数据库连接串、令牌或未公开玩家手牌。
 

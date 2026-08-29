@@ -27,8 +27,12 @@ public class RoomLifecycleConfiguration {
     public EmptyRoomCleanupScheduler emptyRoomCleanupScheduler(
             @Qualifier("roomCleanupTaskScheduler") TaskScheduler scheduler,
             RoomService rooms,
-            PokerRoomProperties properties
+            PokerRoomProperties properties,
+            PokerNetworkProperties networkProperties
     ) {
+        if (properties.emptyTtl().compareTo(networkProperties.disconnectGrace()) <= 0) {
+            throw new IllegalStateException("empty room ttl must be longer than disconnect grace");
+        }
         return new EmptyRoomCleanupScheduler(
                 scheduler,
                 rooms,

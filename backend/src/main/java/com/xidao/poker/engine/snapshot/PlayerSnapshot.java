@@ -2,6 +2,9 @@ package com.xidao.poker.engine.snapshot;
 
 import com.xidao.poker.engine.card.Card;
 import com.xidao.poker.engine.player.PlayerStatus;
+import com.xidao.poker.engine.player.ConnectionStatus;
+import com.xidao.poker.engine.player.HandStatus;
+import com.xidao.poker.engine.player.SeatStatus;
 
 import java.util.List;
 
@@ -13,6 +16,9 @@ public record PlayerSnapshot(
         int streetBet,
         int totalContribution,
         PlayerStatus status,
+        ConnectionStatus connectionStatus,
+        SeatStatus seatStatus,
+        HandStatus handStatus,
         boolean inHand,
         boolean canAct,
         boolean ready,

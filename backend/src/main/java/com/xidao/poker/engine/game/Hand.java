@@ -14,7 +14,7 @@ import com.xidao.poker.engine.history.CompletedHandAction;
 import com.xidao.poker.engine.history.CompletedHandPlayer;
 import com.xidao.poker.engine.history.CompletedHandSnapshot;
 import com.xidao.poker.engine.player.Player;
-import com.xidao.poker.engine.player.PlayerStatus;
+import com.xidao.poker.engine.player.HandStatus;
 import com.xidao.poker.engine.pot.Pot;
 import com.xidao.poker.engine.pot.PotAward;
 import com.xidao.poker.engine.pot.PotManager;
@@ -164,6 +164,7 @@ public final class Hand {
                 "currentBet", result.currentBet(),
                 "fullRaise", result.fullRaise(),
                 "status", player.status().name(),
+                "handStatus", player.handStatus().name(),
                 "canAct", player.canAct()
         ));
 
@@ -187,14 +188,16 @@ public final class Hand {
         Player player = requirePlayer(playerId);
         if (player.isDisconnected()) return;
         Integer previousActor = currentActorSeat();
-        if (player.status() == PlayerStatus.ACTIVE) {
+        if (player.handStatus() == HandStatus.ACTIVE) {
             player.disconnectAndForfeitHand();
         } else {
             player.disconnect();
         }
         emit(GameEventType.PLAYER_DISCONNECTED, player.id(), Map.of(
                 "seat", player.seat(),
-                "forfeitedHand", player.isFolded()
+                "forfeitedHand", player.isFolded(),
+                "connectionStatus", player.connectionStatus().name(),
+                "handStatus", player.handStatus().name()
         ));
 
         if (phase.isBettingPhase() && bettingRound != null) {
@@ -219,7 +222,10 @@ public final class Hand {
         player.reconnect();
         emit(GameEventType.PLAYER_RECONNECTED, player.id(), Map.of(
                 "seat", player.seat(),
-                "status", player.status().name()
+                "status", player.status().name(),
+                "connectionStatus", player.connectionStatus().name(),
+                "seatStatus", player.seatStatus().name(),
+                "handStatus", player.handStatus().name()
         ));
         // 当前手已因掉线弃牌的玩家只能观看到本手结束，不会重新进入行动队列。
         assertActorInvariant();
@@ -357,7 +363,12 @@ public final class Hand {
             boolean busted = player.stack() == 0;
             player.finishHand();
             if (busted) {
-                emit(GameEventType.PLAYER_BUSTED, player.id(), Map.of("seat", player.seat()));
+                emit(GameEventType.PLAYER_BUSTED, player.id(), Map.of(
+                        "seat", player.seat(),
+                        "connectionStatus", player.connectionStatus().name(),
+                        "seatStatus", player.seatStatus().name(),
+                        "handStatus", player.handStatus().name()
+                ));
             }
         }
         bettingRound = null;

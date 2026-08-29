@@ -8,7 +8,7 @@ function fillRandomBytes(bytes: RandomBytes): void {
     return
   }
 
-  // 玩家 ID 和 commandId 只用于客户端去重与身份键，不承担重连令牌的安全职责。
+  // 玩家 ID 和 requestId 只用于客户端去重与身份键，不承担重连令牌的安全职责。
   // 真正的 resumeToken 始终由服务端使用 SecureRandom 生成。
   for (let index = 0; index < bytes.length; index += 1) {
     bytes[index] = Math.floor(Math.random() * 256)

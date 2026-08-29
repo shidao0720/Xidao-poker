@@ -51,6 +51,7 @@ public final class RoomService {
         if (ttl == null || ttl.isNegative() || ttl.isZero()) {
             throw new IllegalArgumentException("empty-room ttl must be positive");
         }
-        return registry.removeEmptySince(Instant.now(clock).minus(ttl));
+        Instant now = Instant.now(clock);
+        return registry.executeCleanupTimers(registry.cleanupCommandsDue(now, ttl), now);
     }
 }

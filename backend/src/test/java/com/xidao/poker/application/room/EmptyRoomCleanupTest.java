@@ -1,5 +1,6 @@
 package com.xidao.poker.application.room;
 
+import com.xidao.poker.application.command.EmptyRoomCleanupCommand;
 import com.xidao.poker.engine.game.GameConfig;
 import org.junit.jupiter.api.Test;
 
@@ -8,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class EmptyRoomCleanupTest {
@@ -61,6 +63,22 @@ class EmptyRoomCleanupTest {
         clock.advance(Duration.ofSeconds(1));
         assertThat(rooms.removeRoomsEmptyFor(EMPTY_TTL)).containsExactly("rejoin-room");
         assertThat(registry.find("rejoin-room")).isEmpty();
+    }
+
+    @Test
+    void cleanupCommandCapturedBeforeAJoinIsStaleAtExecutionTime() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-27T00:00:00Z"));
+        RoomRegistry registry = new RoomRegistry(clock);
+        RoomRuntime runtime = registry.create(
+                new RoomMetadata("stale-cleanup", "Stale Cleanup", clock.instant()), CONFIG, 4L);
+        clock.advance(EMPTY_TTL);
+        List<EmptyRoomCleanupCommand> commands = registry.cleanupCommandsDue(clock.instant(), EMPTY_TTL);
+        assertThat(commands).singleElement();
+
+        runtime.join("join-A", "A", "Alice", "socket-A");
+        runtime.drainOutbox();
+        assertThat(registry.executeCleanupTimers(commands, clock.instant())).isEmpty();
+        assertThat(registry.find("stale-cleanup")).contains(runtime);
     }
 
     private static final class MutableClock extends Clock {

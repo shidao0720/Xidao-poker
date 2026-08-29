@@ -1,8 +1,10 @@
 package com.xidao.poker.application.room;
 
+import com.xidao.poker.application.command.EmptyRoomCleanupCommand;
 import com.xidao.poker.engine.game.GameConfig;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -96,14 +98,30 @@ public final class RoomRegistry {
         rooms.remove(roomId, runtime);
     }
 
-    List<String> removeEmptySince(Instant cutoff) {
-        if (cutoff == null) throw new IllegalArgumentException("empty-room cutoff is required");
+    List<EmptyRoomCleanupCommand> cleanupCommandsDue(Instant now, Duration ttl) {
+        if (now == null) throw new IllegalArgumentException("current time is required");
+        if (ttl == null || ttl.isNegative() || ttl.isZero()) {
+            throw new IllegalArgumentException("empty-room ttl must be positive");
+        }
+        return rooms.values().stream()
+                .map(runtime -> runtime.cleanupCommandIfDue(now, ttl))
+                .flatMap(Optional::stream)
+                .sorted(Comparator.comparing(EmptyRoomCleanupCommand::roomId))
+                .toList();
+    }
+
+    List<String> executeCleanupTimers(List<EmptyRoomCleanupCommand> commands, Instant now) {
+        if (commands == null) throw new IllegalArgumentException("cleanup commands are required");
+        if (now == null) throw new IllegalArgumentException("current time is required");
         List<String> removed = new ArrayList<>();
-        rooms.forEach((roomId, runtime) -> {
-            if (runtime.closeIfEmptySince(cutoff) && rooms.remove(roomId, runtime)) {
-                removed.add(roomId);
+        for (EmptyRoomCleanupCommand command : commands) {
+            RoomRuntime runtime = rooms.get(command.roomId());
+            if (runtime != null
+                    && runtime.executeCleanupTimer(command, now)
+                    && rooms.remove(command.roomId(), runtime)) {
+                removed.add(command.roomId());
             }
-        });
+        }
         removed.sort(String::compareTo);
         return List.copyOf(removed);
     }

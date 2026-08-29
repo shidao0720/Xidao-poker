@@ -1,4 +1,5 @@
 import { useGameStore } from '../store/gameStore'
+import { BUILD_VERSION, PROTOCOL_VERSION, buildVersionsCompatible } from '../config/protocol'
 import { createRandomId } from '../utils/randomId'
 import type {
   ClientEnvelope,
@@ -61,8 +62,6 @@ export function reconnectAttemptsExhausted(attempts: number): boolean {
 }
 
 function socketBaseUrl(): string {
-  const configured = import.meta.env.VITE_WS_BASE_URL?.replace(/\/$/, '')
-  if (configured) return configured
   return window.location.origin.replace(/^http/, 'ws')
 }
 
@@ -149,6 +148,8 @@ export class PokerSocket {
     const { roomId, playerId, playerName } = this.options
     const credentials = loadCredentials(roomId, playerId)
     const params = new URLSearchParams({ roomId, playerId })
+    params.set('protocolVersion', String(PROTOCOL_VERSION))
+    params.set('buildVersion', BUILD_VERSION)
     if (credentials) {
       params.set('connectionEpoch', String(credentials.connectionEpoch))
       params.set('resumeToken', credentials.resumeToken)
@@ -188,6 +189,15 @@ export class PokerSocket {
       envelope = JSON.parse(raw) as ServerEnvelope
     } catch {
       useGameStore.getState().setError('收到无法识别的服务器消息')
+      return
+    }
+
+    if (envelope.protocolVersion !== PROTOCOL_VERSION) {
+      this.stopForVersionMismatch('前后端协议版本不一致，请刷新页面或重新启动局域网服务')
+      return
+    }
+    if (!buildVersionsCompatible(envelope.buildVersion)) {
+      this.stopForVersionMismatch('前端文件已过期，请强制刷新页面后重新进入')
       return
     }
 
@@ -232,6 +242,13 @@ export class PokerSocket {
     })
   }
 
+  private stopForVersionMismatch(message: string): void {
+    this.intentionallyClosed = true
+    this.closeSocketOnly()
+    useGameStore.getState().setConnection('closed')
+    useGameStore.getState().setError(message)
+  }
+
   private applyEvent(event: GameEvent): void {
     const result = useGameStore.getState().applyEvent(event)
     if (result === 'gap' && !this.replayRequested) {
@@ -263,7 +280,7 @@ export class PokerSocket {
       useGameStore.getState().setError('当前未连接到牌桌')
       return
     }
-    const envelope: ClientEnvelope = { type, commandId: createRandomId('cmd_'), payload }
+    const envelope: ClientEnvelope = { type, requestId: createRandomId('req_'), payload }
     this.socket.send(JSON.stringify(envelope))
   }
 

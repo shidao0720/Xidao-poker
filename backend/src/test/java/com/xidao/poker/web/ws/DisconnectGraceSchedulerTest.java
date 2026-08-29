@@ -1,5 +1,7 @@
 package com.xidao.poker.web.ws;
 
+import com.xidao.poker.application.command.DisconnectExpiryCommand;
+import com.xidao.poker.application.command.RoomTimerScope;
 import com.xidao.poker.application.room.GameApplicationService;
 import com.xidao.poker.application.room.RoomExecutionResult;
 import org.junit.jupiter.api.Test;
@@ -29,7 +31,9 @@ class DisconnectGraceSchedulerTest {
         var runnable = org.mockito.ArgumentCaptor.forClass(Runnable.class);
         doReturn(future).when(taskScheduler).schedule(runnable.capture(), any(Instant.class));
         GameApplicationService games = mock(GameApplicationService.class);
-        when(games.expireDisconnected("room", "disconnect-expired-1", "A", 1))
+        when(games.timerScope("room")).thenReturn(new RoomTimerScope("room", 7, 11));
+        var command = org.mockito.ArgumentCaptor.forClass(DisconnectExpiryCommand.class);
+        when(games.executeTimer(command.capture()))
                 .thenReturn(new RoomExecutionResult(false, false, 1, 3, List.of(), null));
         WebSocketConnectionRegistry connections = new WebSocketConnectionRegistry(10_000, 1_048_576);
         WebSocketSession session = mock(WebSocketSession.class);
@@ -52,7 +56,9 @@ class DisconnectGraceSchedulerTest {
         assertThat(scheduler.pendingTaskCount()).isEqualTo(1);
         runnable.getValue().run();
 
-        verify(games).expireDisconnected("room", "disconnect-expired-1", "A", 1);
+        verify(games).executeTimer(any(DisconnectExpiryCommand.class));
+        assertThat(command.getValue()).isEqualTo(new DisconnectExpiryCommand(
+                "room", "disconnect-expired-1", "A", 1, 7, 11));
         assertThat(connections.resumeToken("room", "A", "socket-A", 1)).isEmpty();
         assertThat(scheduler.pendingTaskCount()).isZero();
     }
@@ -62,9 +68,11 @@ class DisconnectGraceSchedulerTest {
         TaskScheduler taskScheduler = mock(TaskScheduler.class);
         ScheduledFuture<?> future = mock(ScheduledFuture.class);
         doReturn(future).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+        GameApplicationService games = mock(GameApplicationService.class);
+        when(games.timerScope("room")).thenReturn(new RoomTimerScope("room", 0, 0));
         DisconnectGraceScheduler scheduler = new DisconnectGraceScheduler(
                 taskScheduler,
-                mock(GameApplicationService.class),
+                games,
                 new WebSocketConnectionRegistry(10_000, 1_048_576),
                 Duration.ofSeconds(30),
                 Clock.fixed(Instant.parse("2026-08-27T00:00:00Z"), ZoneOffset.UTC)

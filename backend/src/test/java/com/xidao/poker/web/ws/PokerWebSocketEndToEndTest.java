@@ -15,6 +15,7 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
+import com.xidao.poker.web.protocol.ProtocolCompatibility;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.net.URI;
@@ -59,7 +60,9 @@ class PokerWebSocketEndToEndTest {
         WebSocketSession session = null;
         try {
             URI uri = URI.create("ws://localhost:" + port + "/ws/poker?roomId=" + roomId
-                    + "&playerId=E2E_A&playerName=Alice");
+                    + "&playerId=E2E_A&playerName=Alice"
+                    + "&protocolVersion=" + ProtocolCompatibility.CURRENT_PROTOCOL_VERSION
+                    + "&buildVersion=" + ProtocolCompatibility.currentBuildVersion());
             session = client.execute(clientHandler, new WebSocketHttpHeaders(), uri)
                     .get(5, TimeUnit.SECONDS);
 
@@ -68,7 +71,7 @@ class PokerWebSocketEndToEndTest {
             assertThat(snapshot.path("payload").path("resumeToken").asText()).isNotBlank();
 
             session.sendMessage(new TextMessage("""
-                    {"type":"READY","commandId":"e2e-ready","payload":{"ready":true}}
+                    {"type":"READY","requestId":"e2e-ready","payload":{"ready":true}}
                     """));
             JsonNode readyEvent = awaitType(received, "READY_CHANGED", Duration.ofSeconds(5));
             assertThat(readyEvent.path("payload").path("playerId").asText()).isEqualTo("E2E_A");

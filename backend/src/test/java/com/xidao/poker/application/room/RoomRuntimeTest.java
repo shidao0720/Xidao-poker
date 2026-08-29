@@ -10,7 +10,10 @@ import com.xidao.poker.engine.event.GameEvent;
 import com.xidao.poker.engine.event.GameEventType;
 import com.xidao.poker.engine.game.GameConfig;
 import com.xidao.poker.engine.game.GamePhase;
+import com.xidao.poker.engine.player.ConnectionStatus;
+import com.xidao.poker.engine.player.HandStatus;
 import com.xidao.poker.engine.player.PlayerStatus;
+import com.xidao.poker.engine.player.SeatStatus;
 import com.xidao.poker.engine.snapshot.GameSnapshot;
 import org.junit.jupiter.api.Test;
 
@@ -285,6 +288,33 @@ class RoomRuntimeTest {
         assertThat(runtime.summary().phase()).isEqualTo(GamePhase.ROUND_END);
         assertThat(runtime.summary().playerCount()).isEqualTo(2);
         assertThat(runtime.connection("A")).isEmpty();
+        assertThat(remainingEvents).extracting(GameEvent::type).contains(GameEventType.PLAYER_LEFT);
+    }
+
+    @Test
+    void allInPlayerWhoVoluntarilyLeavesRemainsEligibleUntilSettlement() {
+        StartedRoom started = startedRoom();
+        RoomRuntime runtime = started.runtime();
+        GameSnapshot actor = started.startResult().requesterSnapshot();
+
+        RoomExecutionResult allIn = runtime.act(action("all-in-A", "A", actor, ActionType.ALL_IN));
+        RoomExecutionResult leave = runtime.leave("leave-all-in-A", "A", "socket-A", 1);
+        GameSnapshot observer = runtime.requestSnapshot("B", "socket-B", 1);
+
+        assertThat(observer.players()).filteredOn(player -> player.id().equals("A")).singleElement()
+                .satisfies(player -> {
+                    assertThat(player.connectionStatus()).isEqualTo(ConnectionStatus.DISCONNECTED);
+                    assertThat(player.seatStatus()).isEqualTo(SeatStatus.SEATED);
+                    assertThat(player.handStatus()).isEqualTo(HandStatus.ALL_IN);
+                    assertThat(player.inHand()).isTrue();
+                    assertThat(player.canAct()).isFalse();
+                });
+        assertThat(runtime.summary().playerCount()).isEqualTo(3);
+
+        List<GameEvent> remainingEvents = playPassivelyToEnd(runtime, allIn);
+
+        assertThat(runtime.summary().phase()).isEqualTo(GamePhase.ROUND_END);
+        assertThat(runtime.summary().playerCount()).isEqualTo(2);
         assertThat(remainingEvents).extracting(GameEvent::type).contains(GameEventType.PLAYER_LEFT);
     }
 

@@ -5,9 +5,15 @@ spring:
   flyway:
     enabled: false
 
+server:
+  # LAN 发布模式监听所有网卡；防火墙仍应只允许可信专用网络访问应用端口。
+  address: 0.0.0.0
+  port: 8080
+
 poker:
   room:
-    empty-ttl: 20s
+    # 必须严格长于 disconnect-grace，等待重连的成员不会触发空房清理。
+    empty-ttl: 45s
     cleanup-interval: 1s
   persistence:
     enabled: false
@@ -23,6 +29,7 @@ poker:
       maximum-pool-size: 4
   network:
     disconnect-grace: 30s
+    turn-timeout: 30s
     maximum-text-message-bytes: 16384
     send-time-limit-millis: 10000
     send-buffer-bytes: 1048576

@@ -65,17 +65,20 @@ public final class GameSession {
         playersById.put(playerId, player);
         boolean inHand = handInProgress() && currentHand.containsPlayer(player.id()) && player.isInHand();
         List<GameEvent> raw = new ArrayList<>();
-        raw.add(GameEvent.of(GameEventType.PLAYER_JOINED, currentHandId(), playerId, Map.of(
-                "name", name,
-                "seat", seat,
-                "stack", player.stack(),
-                "streetBet", player.streetBet(),
-                "totalContribution", player.totalContribution(),
-                "status", player.status().name(),
-                "inHand", inHand,
-                "canAct", inHand && player.canAct(),
-                "ready", player.ready(),
-                "phase", phase().name()
+        raw.add(GameEvent.of(GameEventType.PLAYER_JOINED, currentHandId(), playerId, Map.ofEntries(
+                Map.entry("name", name),
+                Map.entry("seat", seat),
+                Map.entry("stack", player.stack()),
+                Map.entry("streetBet", player.streetBet()),
+                Map.entry("totalContribution", player.totalContribution()),
+                Map.entry("status", player.status().name()),
+                Map.entry("connectionStatus", player.connectionStatus().name()),
+                Map.entry("seatStatus", player.seatStatus().name()),
+                Map.entry("handStatus", player.handStatus().name()),
+                Map.entry("inHand", inHand),
+                Map.entry("canAct", inHand && player.canAct()),
+                Map.entry("ready", player.ready()),
+                Map.entry("phase", phase().name())
         )));
         if (ownerId == null) {
             ownerId = playerId;
@@ -165,7 +168,11 @@ public final class GameSession {
         } else {
             player.disconnect();
             raw = new ArrayList<>(List.of(GameEvent.of(
-                    GameEventType.PLAYER_DISCONNECTED, currentHandId(), playerId, Map.of("seat", player.seat()))));
+                    GameEventType.PLAYER_DISCONNECTED, currentHandId(), playerId, Map.of(
+                            "seat", player.seat(),
+                            "connectionStatus", player.connectionStatus().name(),
+                            "handStatus", player.handStatus().name()
+                    ))));
         }
         transferOwnerAfterDisconnect(playerId, raw);
         return publish(raw);
@@ -184,7 +191,10 @@ public final class GameSession {
             raw = List.of(GameEvent.of(
                     GameEventType.PLAYER_RECONNECTED, currentHandId(), playerId, Map.of(
                             "seat", player.seat(),
-                            "status", player.status().name()
+                            "status", player.status().name(),
+                            "connectionStatus", player.connectionStatus().name(),
+                            "seatStatus", player.seatStatus().name(),
+                            "handStatus", player.handStatus().name()
                     )));
         }
         return publish(raw);
@@ -232,6 +242,9 @@ public final class GameSession {
                         player.streetBet(),
                         player.totalContribution(),
                         player.status(),
+                        player.connectionStatus(),
+                        player.seatStatus(),
+                        player.handStatus(),
                         handInProgress() && currentHand.containsPlayer(player.id()) && player.isInHand(),
                         handInProgress() && currentHand.containsPlayer(player.id()) && player.canAct(),
                         player.ready(),

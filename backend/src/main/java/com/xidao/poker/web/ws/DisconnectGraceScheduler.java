@@ -1,5 +1,7 @@
 package com.xidao.poker.web.ws;
 
+import com.xidao.poker.application.command.DisconnectExpiryCommand;
+import com.xidao.poker.application.command.RoomTimerScope;
 import com.xidao.poker.application.room.GameApplicationService;
 import com.xidao.poker.application.room.RoomApplicationException;
 import jakarta.annotation.PreDestroy;
@@ -41,17 +43,27 @@ public final class DisconnectGraceScheduler {
 
     public void schedule(SocketIdentity identity) {
         MemberKey key = new MemberKey(identity.roomId(), identity.playerId());
+        RoomTimerScope scope = games.timerScope(identity.roomId());
+        DisconnectExpiryCommand command = new DisconnectExpiryCommand(
+                identity.roomId(),
+                "disconnect-expired-" + identity.connectionEpoch(),
+                identity.playerId(),
+                identity.connectionEpoch(),
+                scope.handId(),
+                scope.turnId()
+        );
         tasks.compute(key, (ignored, previous) -> {
             if (previous != null) previous.future().cancel(false);
             ScheduledFuture<?> future = scheduler.schedule(
-                    () -> expire(key, identity.connectionEpoch()),
+                    () -> expire(key, command),
                     Instant.now(clock).plus(grace)
             );
             if (future == null) throw new IllegalStateException("disconnect timeout was not scheduled");
-            return new ScheduledDisconnect(identity.connectionEpoch(), future);
+            return new ScheduledDisconnect(command, future);
         });
-        log.info("DISCONNECT_GRACE_SCHEDULED roomId={} playerId={} epoch={} graceSeconds={}",
-                identity.roomId(), identity.playerId(), identity.connectionEpoch(), grace.toSeconds());
+        log.info("DISCONNECT_GRACE_SCHEDULED roomId={} handId={} turnId={} playerId={} epoch={} graceSeconds={}",
+                identity.roomId(), command.handId(), command.turnId(), identity.playerId(),
+                identity.connectionEpoch(), grace.toSeconds());
     }
 
     public void cancel(String roomId, String playerId) {
@@ -59,27 +71,24 @@ public final class DisconnectGraceScheduler {
         if (removed != null) removed.future().cancel(false);
     }
 
-    private void expire(MemberKey key, long epoch) {
+    private void expire(MemberKey key, DisconnectExpiryCommand command) {
         try {
-            games.expireDisconnected(
-                    key.roomId(),
-                    "disconnect-expired-" + epoch,
-                    key.playerId(),
-                    epoch
-            );
-            connections.forgetMember(key.roomId(), key.playerId(), epoch);
-            log.info("DISCONNECT_GRACE_EXPIRED roomId={} playerId={} epoch={}",
-                    key.roomId(), key.playerId(), epoch);
+            games.executeTimer(command);
+            connections.forgetMember(key.roomId(), key.playerId(), command.connectionEpoch());
+            log.info("DISCONNECT_GRACE_EXPIRED roomId={} handId={} turnId={} playerId={} epoch={}",
+                    key.roomId(), command.handId(), command.turnId(), key.playerId(),
+                    command.connectionEpoch());
         } catch (RoomApplicationException error) {
             // 房间/成员已由其他路径清理时，epoch 校验仍保证不会删除新连接。
-            connections.forgetMember(key.roomId(), key.playerId(), epoch);
+            connections.forgetMember(key.roomId(), key.playerId(), command.connectionEpoch());
             log.debug("DISCONNECT_EXPIRY_IGNORED roomId={} playerId={} epoch={} code={}",
-                    key.roomId(), key.playerId(), epoch, error.code());
+                    key.roomId(), key.playerId(), command.connectionEpoch(), error.code());
         } catch (RuntimeException error) {
             log.error("DISCONNECT_EXPIRY_FAILED roomId={} playerId={} epoch={}",
-                    key.roomId(), key.playerId(), epoch, error);
+                    key.roomId(), key.playerId(), command.connectionEpoch(), error);
         } finally {
-            tasks.computeIfPresent(key, (ignored, current) -> current.epoch() == epoch ? null : current);
+            tasks.computeIfPresent(key, (ignored, current) ->
+                    current.command().commandId().equals(command.commandId()) ? null : current);
         }
     }
 
@@ -96,6 +105,6 @@ public final class DisconnectGraceScheduler {
     private record MemberKey(String roomId, String playerId) {
     }
 
-    private record ScheduledDisconnect(long epoch, ScheduledFuture<?> future) {
+    private record ScheduledDisconnect(DisconnectExpiryCommand command, ScheduledFuture<?> future) {
     }
 }

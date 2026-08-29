@@ -18,6 +18,10 @@ export type PlayerStatus =
   | 'SPECTATOR'
   | 'BUSTED'
 
+export type PlayerConnectionStatus = 'CONNECTED' | 'DISCONNECTED'
+export type PlayerSeatStatus = 'SEATED' | 'SPECTATOR' | 'BUSTED'
+export type PlayerHandStatus = 'NOT_IN_HAND' | 'ACTIVE' | 'FOLDED' | 'ALL_IN'
+
 export type ActionType = 'FOLD' | 'CHECK' | 'CALL' | 'BET' | 'RAISE' | 'ALL_IN'
 export type HandCategory =
   | 'HIGH_CARD'
@@ -76,6 +80,9 @@ export interface PlayerSnapshot {
   streetBet: number
   totalContribution: number
   status: PlayerStatus
+  connectionStatus: PlayerConnectionStatus
+  seatStatus: PlayerSeatStatus
+  handStatus: PlayerHandStatus
   inHand: boolean
   canAct: boolean
   ready: boolean
@@ -163,9 +170,11 @@ export type GameEventType =
   | 'HAND_ENDED'
 
 export interface ServerEnvelope<T = unknown> {
+  protocolVersion: number
+  buildVersion: string
   type: GameEventType | ServerMessageType
   roomId: string | null
-  commandId: string | null
+  requestId: string | null
   sequence: number | null
   handId: number | null
   connectionEpoch: number | null
@@ -213,7 +222,7 @@ export interface ClientEnvelope {
     | 'REPLAY_EVENTS'
     | 'LEAVE'
     | 'PING'
-  commandId: string
+  requestId: string
   payload: Record<string, unknown>
 }
 

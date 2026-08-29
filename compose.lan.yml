@@ -1,0 +1,45 @@
+services:
+  poker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${POKER_HTTP_PORT:-8080}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      POKER_DB_URL: jdbc:postgresql://postgres:5432/xidao_poker
+      POKER_DB_USERNAME: xidao_poker
+      POKER_DB_PASSWORD: ${POKER_DB_PASSWORD:?Set POKER_DB_PASSWORD in .env.lan}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lan-edge
+      - database
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: xidao_poker
+      POSTGRES_USER: xidao_poker
+      POSTGRES_PASSWORD: ${POKER_DB_PASSWORD:?Set POKER_DB_PASSWORD in .env.lan}
+    volumes:
+      - poker-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xidao_poker -d xidao_poker"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # 安全约束：数据库没有 ports 映射，只能由内部 database 网络上的应用访问。
+    networks:
+      - database
+
+volumes:
+  poker-postgres-data:
+
+networks:
+  lan-edge:
+  database:
+    internal: true

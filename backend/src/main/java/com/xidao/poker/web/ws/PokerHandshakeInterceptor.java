@@ -36,6 +36,8 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
             String playerName = optionalTrimmed(query, "playerName");
             String epochText = optionalTrimmed(query, "connectionEpoch");
             String resumeToken = optionalTrimmed(query, "resumeToken");
+            int protocolVersion = requiredPositiveInteger(query, "protocolVersion");
+            String buildVersion = requiredBuildVersion(query);
 
             Long epoch = epochText == null ? null : parsePositiveEpoch(epochText);
             boolean hasToken = resumeToken != null;
@@ -51,7 +53,15 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
 
             attributes.put(
                     HANDSHAKE_ATTRIBUTE,
-                    new PokerHandshakeRequest(roomId, playerId, playerName, epoch, resumeToken)
+                    new PokerHandshakeRequest(
+                            roomId,
+                            playerId,
+                            playerName,
+                            epoch,
+                            resumeToken,
+                            protocolVersion,
+                            buildVersion
+                    )
             );
             return true;
         } catch (IllegalArgumentException error) {
@@ -96,5 +106,25 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
         } catch (NumberFormatException error) {
             throw new IllegalArgumentException("connection epoch is invalid", error);
         }
+    }
+
+    private int requiredPositiveInteger(MultiValueMap<String, String> query, String name) {
+        String value = optionalTrimmed(query, name);
+        if (value == null) throw new IllegalArgumentException(name + " is required");
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed <= 0) throw new IllegalArgumentException(name + " must be positive");
+            return parsed;
+        } catch (NumberFormatException error) {
+            throw new IllegalArgumentException(name + " is invalid", error);
+        }
+    }
+
+    private String requiredBuildVersion(MultiValueMap<String, String> query) {
+        String value = optionalTrimmed(query, "buildVersion");
+        if (value == null || value.length() > 64 || !value.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException("buildVersion is invalid");
+        }
+        return value;
     }
 }

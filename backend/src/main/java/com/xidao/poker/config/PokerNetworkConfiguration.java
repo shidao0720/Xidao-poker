@@ -10,6 +10,7 @@ import com.xidao.poker.web.ws.DisconnectGraceScheduler;
 import com.xidao.poker.web.ws.PokerWebSocketHandler;
 import com.xidao.poker.web.ws.WebSocketConnectionRegistry;
 import com.xidao.poker.web.ws.WebSocketRoomDeliverySink;
+import com.xidao.poker.web.lifecycle.TurnTimeoutScheduler;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -93,6 +94,21 @@ public class PokerNetworkConfiguration {
                 games,
                 connections,
                 properties.disconnectGrace(),
+                pokerClock
+        );
+    }
+
+    @Bean
+    public TurnTimeoutScheduler turnTimeoutScheduler(
+            @Qualifier("disconnectTaskScheduler") TaskScheduler taskScheduler,
+            GameApplicationService games,
+            PokerNetworkProperties properties,
+            Clock pokerClock
+    ) {
+        return new TurnTimeoutScheduler(
+                taskScheduler,
+                games,
+                properties.turnTimeout(),
                 pokerClock
         );
     }

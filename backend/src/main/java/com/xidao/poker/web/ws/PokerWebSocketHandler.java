@@ -14,6 +14,7 @@ import com.xidao.poker.engine.action.IllegalActionException;
 import com.xidao.poker.web.protocol.ClientEnvelope;
 import com.xidao.poker.web.protocol.ClientMessageType;
 import com.xidao.poker.web.protocol.PlayerActionPayload;
+import com.xidao.poker.web.protocol.ProtocolCompatibility;
 import com.xidao.poker.web.protocol.ReadyPayload;
 import com.xidao.poker.web.protocol.ReplayEventsPayload;
 import com.xidao.poker.web.protocol.ServerEnvelope;
@@ -61,6 +62,27 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
         Object attribute = session.getAttributes().get(PokerHandshakeInterceptor.HANDSHAKE_ATTRIBUTE);
         if (!(attribute instanceof PokerHandshakeRequest request)) {
             sendRawErrorAndClose(session, null, null, "INVALID_HANDSHAKE", "missing connection identity");
+            return;
+        }
+
+        if (!ProtocolCompatibility.protocolMatches(request.protocolVersion())) {
+            sendRawErrorAndClose(
+                    session,
+                    request.roomId(),
+                    null,
+                    "PROTOCOL_VERSION_MISMATCH",
+                    "client protocol is incompatible with this server"
+            );
+            return;
+        }
+        if (!ProtocolCompatibility.buildMatches(request.buildVersion())) {
+            sendRawErrorAndClose(
+                    session,
+                    request.roomId(),
+                    null,
+                    "BUILD_VERSION_MISMATCH",
+                    "refresh the page to load the matching client build"
+            );
             return;
         }
 
@@ -137,8 +159,8 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
             envelope = objectMapper.readValue(message.getPayload(), ClientEnvelope.class);
             ClientMessageType type = parseType(envelope.type());
             String commandId = type == ClientMessageType.PING
-                    ? optionalCommandId(envelope.commandId())
-                    : requiredCommandId(envelope.commandId());
+                    ? optionalCommandId(envelope.requestId())
+                    : requiredCommandId(envelope.requestId());
             log.debug("WS_MESSAGE_RECEIVED roomId={} playerId={} connectionId={} type={} commandId={}",
                     identity.roomId(), identity.playerId(), identity.connectionId(), type, commandId);
             handle(identity, session, type, commandId, envelope.payload());
@@ -147,21 +169,21 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
                     identity.roomId(), identity.playerId(), identity.connectionId());
             send(identity, ServerEnvelope.error(
                     identity.roomId(),
-                    envelope == null ? null : envelope.commandId(),
+                    envelope == null ? null : envelope.requestId(),
                     "INVALID_MESSAGE",
                     "message validation failed"
             ));
         } catch (IllegalActionException | RoomApplicationException error) {
             log.debug("WS_MESSAGE_REJECTED roomId={} playerId={} connectionId={} code={}",
                     identity.roomId(), identity.playerId(), identity.connectionId(), errorCode(error));
-            sendBoundError(identity, envelope == null ? null : envelope.commandId(), error);
+            sendBoundError(identity, envelope == null ? null : envelope.requestId(), error);
         } catch (RuntimeException error) {
             log.error("WS_MESSAGE_FAILED roomId={} playerId={} connectionId={} commandId={}",
                     identity.roomId(), identity.playerId(), identity.connectionId(),
-                    envelope == null ? null : envelope.commandId(), error);
+                    envelope == null ? null : envelope.requestId(), error);
             send(identity, ServerEnvelope.error(
                     identity.roomId(),
-                    envelope == null ? null : envelope.commandId(),
+                    envelope == null ? null : envelope.requestId(),
                     "INTERNAL_ERROR",
                     "server could not process the message"
             ));

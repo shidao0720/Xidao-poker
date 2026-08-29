@@ -10,7 +10,7 @@ public record PokerRoomProperties(
         Duration cleanupInterval
 ) {
     public PokerRoomProperties {
-        emptyTtl = emptyTtl == null ? Duration.ofSeconds(20) : emptyTtl;
+        emptyTtl = emptyTtl == null ? Duration.ofSeconds(45) : emptyTtl;
         cleanupInterval = cleanupInterval == null ? Duration.ofSeconds(1) : cleanupInterval;
         if (emptyTtl.isNegative() || emptyTtl.isZero()) {
             throw new IllegalArgumentException("empty room ttl must be positive");

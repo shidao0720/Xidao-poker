@@ -20,6 +20,8 @@
     <properties>
         <java.version>21</java.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <!-- 1.21.4 保持 1.x API，同时兼容要求 Docker API >= 1.40 的新引擎。 -->
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -84,6 +86,17 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- LAN 发布脚本先构建 React，再把产物放入同一个 Spring Boot JAR。 -->
+            <resource>
+                <directory>${project.basedir}/../frontend/dist</directory>
+                <targetPath>static</targetPath>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

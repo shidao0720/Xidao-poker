@@ -211,6 +211,7 @@ class BettingRoundTest {
         Player a = player("A", 0, 1_000);
         Player observer = player("O", 1, 1_000);
         Player c = player("C", 2, 1_000);
+        observer.finishHand();
         observer.becomeSpectator();
         BettingRound round = new BettingRound(List.of(a, observer, c), 1, 0, 20, 10);
 
@@ -239,6 +240,8 @@ class BettingRoundTest {
     }
 
     private static Player player(String id, int seat, int stack) {
-        return new Player(id, id, seat, stack);
+        Player player = new Player(id, id, seat, stack);
+        player.beginHand();
+        return player;
     }
 }

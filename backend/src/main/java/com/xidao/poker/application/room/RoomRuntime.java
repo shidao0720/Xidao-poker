@@ -1,6 +1,10 @@
 package com.xidao.poker.application.room;
 
 import com.xidao.poker.application.command.PlayerActionCommand;
+import com.xidao.poker.application.command.DisconnectExpiryCommand;
+import com.xidao.poker.application.command.EmptyRoomCleanupCommand;
+import com.xidao.poker.application.command.RoomTimerCommand;
+import com.xidao.poker.application.command.RoomTimerScope;
 import com.xidao.poker.application.command.StartGameCommand;
 import com.xidao.poker.application.command.TurnTimeoutCommand;
 import com.xidao.poker.application.history.CompletedHandArchive;
@@ -17,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -334,67 +339,162 @@ public final class RoomRuntime {
         }
     }
 
-    /** 断线宽限到期后由应用层 Scheduler 调用；旧 epoch 的任务会被忽略。 */
+    /** 兼容应用层调用；实际执行统一转换为 RoomTimerCommand。 */
     RoomExecutionResult expireDisconnected(
             String commandId,
             String playerId,
             long connectionEpoch
     ) {
+        RoomTimerScope scope = timerScope();
+        return executeTimer(new DisconnectExpiryCommand(
+                metadata.roomId(), commandId, playerId, connectionEpoch,
+                scope.handId(), scope.turnId()
+        ));
+    }
+
+    /** 所有会修改房间的玩家级计时器都由这个入口分派，并共用 RoomRuntime 公平锁。 */
+    RoomExecutionResult executeTimer(RoomTimerCommand command) {
+        if (!metadata.roomId().equals(command.roomId())) {
+            throw new IllegalArgumentException("timer command belongs to another room");
+        }
         lock.lock();
         try {
-            CommandKey key = commandKey(commandId, playerId);
-            if (isDuplicate(key)) return duplicateResult(playerId, false);
-            MemberConnection connection = requireConnection(playerId);
-            if (connection.epoch() != connectionEpoch || connection.state() != ConnectionState.RECONNECTING) {
-                return complete(key, List.of(), Set.of(), false, connection.epoch(), true);
-            }
-            return leaveInternal(key, playerId, connection, false);
+            return switch (command) {
+                case DisconnectExpiryCommand disconnect -> expireDisconnectedInternal(disconnect);
+                case TurnTimeoutCommand timeout -> timeoutInternal(timeout);
+                case EmptyRoomCleanupCommand ignored -> throw new IllegalArgumentException(
+                        "empty-room timers are executed by the registry removal boundary");
+            };
         } finally {
             lock.unlock();
         }
     }
 
-    /** 无响应玩家：可 Check 时自动 Check，面对下注时自动 Fold。 */
-    RoomExecutionResult timeout(TurnTimeoutCommand command) {
-        if (!metadata.roomId().equals(command.roomId())) {
-            throw new IllegalArgumentException("timeout belongs to another room");
+    private RoomExecutionResult expireDisconnectedInternal(DisconnectExpiryCommand command) {
+        CommandKey key = commandKey(command.commandId(), command.playerId());
+        if (isDuplicate(key)) return duplicateResult(command.playerId(), false);
+        MemberConnection connection = requireConnection(command.playerId());
+        if (connection.epoch() != command.connectionEpoch()
+                || connection.state() != ConnectionState.RECONNECTING) {
+            return complete(key, List.of(), Set.of(), false, connection.epoch(), true);
         }
+        return leaveInternal(key, command.playerId(), connection, false);
+    }
+
+    /** 安排任意房间计时器前，在同一把锁内捕获 handId + turnId。 */
+    RoomTimerScope timerScope() {
         lock.lock();
         try {
-            CommandKey key = commandKey(command.commandId(), command.playerId());
-            if (isDuplicate(key)) return duplicateResult(command.playerId(), false);
-            if (!gameSession.containsPlayer(command.playerId())
-                    || gameSession.currentHandId() != command.handId()
-                    || gameSession.currentTurnId() != command.turnId()
-                    || !command.playerId().equals(gameSession.currentActorPlayerId())) {
-                return complete(key, List.of(), Set.of(), false, connectionEpoch(command.playerId()), true);
-            }
-
-            GameSnapshot snapshot = gameSession.snapshot(command.playerId());
-            PlayerAction automaticAction;
-            if (snapshot.legalActions().contains(ActionType.CHECK)) {
-                automaticAction = PlayerAction.check(command.playerId());
-            } else if (snapshot.legalActions().contains(ActionType.FOLD)) {
-                automaticAction = PlayerAction.fold(command.playerId());
-            } else {
-                return complete(key, List.of(), Set.of(), false, connectionEpoch(command.playerId()), true);
-            }
-            List<GameEvent> events = gameSession.handle(
-                    command.handId(),
-                    command.turnId(),
-                    automaticAction
-            );
-            return complete(
-                    key,
-                    events,
-                    Set.of(),
-                    false,
-                    connectionEpoch(command.playerId()),
-                    false
-            );
+            requireOpen();
+            return new RoomTimerScope(
+                    metadata.roomId(), gameSession.currentHandId(), gameSession.currentTurnId());
         } finally {
             lock.unlock();
         }
+    }
+
+    Optional<RoomTurnTimerTarget> turnTimerTarget() {
+        lock.lock();
+        try {
+            if (closed) return Optional.empty();
+            String playerId = gameSession.currentActorPlayerId();
+            long handId = gameSession.currentHandId();
+            long turnId = gameSession.currentTurnId();
+            if (playerId == null || handId <= 0 || turnId <= 0) return Optional.empty();
+            return Optional.of(new RoomTurnTimerTarget(
+                    metadata.roomId(), playerId, handId, turnId));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 清理扫描只生成命令，不在扫描线程中直接关闭房间。 */
+    Optional<EmptyRoomCleanupCommand> cleanupCommandIfDue(Instant now, Duration ttl) {
+        if (now == null) throw new IllegalArgumentException("current time is required");
+        if (ttl == null || ttl.isNegative() || ttl.isZero()) {
+            throw new IllegalArgumentException("empty-room ttl must be positive");
+        }
+        lock.lock();
+        try {
+            if (closed || emptySince == null || emptySince.plus(ttl).isAfter(now) || !removableNow()) {
+                return Optional.empty();
+            }
+            String commandId = "empty-room-expired-" + emptySince.toEpochMilli();
+            return Optional.of(new EmptyRoomCleanupCommand(
+                    metadata.roomId(),
+                    commandId,
+                    gameSession.currentHandId(),
+                    gameSession.currentTurnId(),
+                    emptySince,
+                    emptySince.plus(ttl)
+            ));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 在房间锁内复核空置世代、牌局坐标和截止时间，旧清理命令无副作用。 */
+    boolean executeCleanupTimer(EmptyRoomCleanupCommand command, Instant now) {
+        if (!metadata.roomId().equals(command.roomId())) {
+            throw new IllegalArgumentException("timer command belongs to another room");
+        }
+        if (now == null) throw new IllegalArgumentException("current time is required");
+        lock.lock();
+        try {
+            if (closed
+                    || emptySince == null
+                    || !emptySince.equals(command.expectedEmptySince())
+                    || now.isBefore(command.expiresAt())
+                    || gameSession.currentHandId() != command.handId()
+                    || gameSession.currentTurnId() != command.turnId()
+                    || !removableNow()) {
+                return false;
+            }
+            closed = true;
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 兼容现有调用；实际执行统一转换为 RoomTimerCommand。 */
+    RoomExecutionResult timeout(TurnTimeoutCommand command) {
+        return executeTimer(command);
+    }
+
+    /** 无响应玩家：只由服务端 legalActions 决定自动 Check 或 Fold。调用时已持有房间锁。 */
+    private RoomExecutionResult timeoutInternal(TurnTimeoutCommand command) {
+        CommandKey key = commandKey(command.commandId(), command.playerId());
+        if (isDuplicate(key)) return duplicateResult(command.playerId(), false);
+        if (!gameSession.containsPlayer(command.playerId())
+                || gameSession.currentHandId() != command.handId()
+                || gameSession.currentTurnId() != command.turnId()
+                || !command.playerId().equals(gameSession.currentActorPlayerId())) {
+            return complete(key, List.of(), Set.of(), false, connectionEpoch(command.playerId()), true);
+        }
+
+        GameSnapshot snapshot = gameSession.snapshot(command.playerId());
+        PlayerAction automaticAction;
+        if (snapshot.legalActions().contains(ActionType.CHECK)) {
+            automaticAction = PlayerAction.check(command.playerId());
+        } else if (snapshot.legalActions().contains(ActionType.FOLD)) {
+            automaticAction = PlayerAction.fold(command.playerId());
+        } else {
+            return complete(key, List.of(), Set.of(), false, connectionEpoch(command.playerId()), true);
+        }
+        List<GameEvent> events = gameSession.handle(
+                command.handId(),
+                command.turnId(),
+                automaticAction
+        );
+        return complete(
+                key,
+                events,
+                Set.of(),
+                false,
+                connectionEpoch(command.playerId()),
+                false
+        );
     }
 
     /** 将查看者专属快照按房间顺序加入 outbox，供加入、刷新和主动重同步使用。 */

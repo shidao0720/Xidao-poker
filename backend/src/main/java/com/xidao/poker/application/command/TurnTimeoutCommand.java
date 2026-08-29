@@ -7,7 +7,7 @@ public record TurnTimeoutCommand(
         String playerId,
         long handId,
         long turnId
-) {
+) implements RoomTimerCommand {
     public TurnTimeoutCommand {
         if (roomId == null || roomId.isBlank()) throw new IllegalArgumentException("room id is required");
         if (commandId == null || commandId.isBlank()) throw new IllegalArgumentException("command id is required");

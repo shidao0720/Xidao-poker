@@ -6,6 +6,9 @@ import type {
   GamePhase,
   GameSnapshot,
   PlayerSnapshot,
+  PlayerConnectionStatus,
+  PlayerHandStatus,
+  PlayerSeatStatus,
   PlayerStatus,
   PotAward,
   RevealedHandSnapshot,
@@ -64,6 +67,18 @@ function statusValue(value: unknown): PlayerStatus | undefined {
   return stringValue(value) as PlayerStatus | undefined
 }
 
+function connectionStatusValue(value: unknown): PlayerConnectionStatus | undefined {
+  return stringValue(value) as PlayerConnectionStatus | undefined
+}
+
+function seatStatusValue(value: unknown): PlayerSeatStatus | undefined {
+  return stringValue(value) as PlayerSeatStatus | undefined
+}
+
+function handStatusValue(value: unknown): PlayerHandStatus | undefined {
+  return stringValue(value) as PlayerHandStatus | undefined
+}
+
 function revealedHandsValue(value: unknown): RevealedHandSnapshot[] | undefined {
   return Array.isArray(value) ? value as RevealedHandSnapshot[] : undefined
 }
@@ -76,13 +91,17 @@ function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
   const streetBet = numberValue(event.data.streetBet)
   const totalContribution = numberValue(event.data.totalContribution)
   const status = statusValue(event.data.status)
+  const connectionStatus = connectionStatusValue(event.data.connectionStatus)
+  const seatStatus = seatStatusValue(event.data.seatStatus)
+  const handStatus = handStatusValue(event.data.handStatus)
   const inHand = booleanValue(event.data.inHand)
   const canAct = booleanValue(event.data.canAct)
   const ready = booleanValue(event.data.ready)
 
   if (
     !id || !name || seat === undefined || stack === undefined || streetBet === undefined ||
-    totalContribution === undefined || status === undefined || inHand === undefined ||
+    totalContribution === undefined || status === undefined || connectionStatus === undefined ||
+    seatStatus === undefined || handStatus === undefined || inHand === undefined ||
     canAct === undefined || ready === undefined
   ) return null
 
@@ -94,6 +113,9 @@ function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
     streetBet,
     totalContribution,
     status,
+    connectionStatus,
+    seatStatus,
+    handStatus,
     inHand,
     canAct,
     ready,
@@ -167,6 +189,7 @@ export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameS
           streetBet: numberValue(data.streetBet) ?? player.streetBet,
           totalContribution: player.totalContribution + paid,
           status: statusValue(data.status) ?? player.status,
+          handStatus: handStatusValue(data.handStatus) ?? player.handStatus,
           canAct: data.canAct === true,
         })),
       }
@@ -207,6 +230,8 @@ export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameS
         players: updatePlayer(next.players, event.playerId, (player) => ({
           ...player,
           status: 'DISCONNECTED',
+          connectionStatus: 'DISCONNECTED',
+          handStatus: handStatusValue(data.handStatus) ?? player.handStatus,
           canAct: false,
         })),
       }
@@ -217,6 +242,9 @@ export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameS
         players: updatePlayer(next.players, event.playerId, (player) => ({
           ...player,
           status: statusValue(data.status) ?? player.status,
+          connectionStatus: connectionStatusValue(data.connectionStatus) ?? 'CONNECTED',
+          seatStatus: seatStatusValue(data.seatStatus) ?? player.seatStatus,
+          handStatus: handStatusValue(data.handStatus) ?? player.handStatus,
           canAct: false,
         })),
       }
@@ -227,6 +255,8 @@ export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameS
         players: updatePlayer(next.players, event.playerId, (player) => ({
           ...player,
           status: 'BUSTED',
+          seatStatus: 'BUSTED',
+          handStatus: 'NOT_IN_HAND',
           canAct: false,
           inHand: false,
         })),

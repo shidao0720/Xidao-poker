@@ -6,16 +6,40 @@ import com.xidao.poker.engine.event.GameEvent;
 
 /** 服务端统一出站信封；事件 type 直接使用稳定的 GameEventType 名称。 */
 public record ServerEnvelope(
+        int protocolVersion,
+        String buildVersion,
         String type,
         String roomId,
-        String commandId,
+        String requestId,
         Long sequence,
         Long handId,
         Long connectionEpoch,
         Object payload
 ) {
-    public static ServerEnvelope event(String roomId, GameEvent event) {
+    private static ServerEnvelope message(
+            String type,
+            String roomId,
+            String requestId,
+            Long sequence,
+            Long handId,
+            Long connectionEpoch,
+            Object payload
+    ) {
         return new ServerEnvelope(
+                ProtocolCompatibility.CURRENT_PROTOCOL_VERSION,
+                ProtocolCompatibility.currentBuildVersion(),
+                type,
+                roomId,
+                requestId,
+                sequence,
+                handId,
+                connectionEpoch,
+                payload
+        );
+    }
+
+    public static ServerEnvelope event(String roomId, GameEvent event) {
+        return message(
                 event.type().name(), roomId, null, event.sequence(), event.handId(), null, event
         );
     }
@@ -26,7 +50,7 @@ public record ServerEnvelope(
             String resumeToken,
             com.xidao.poker.engine.snapshot.GameSnapshot snapshot
     ) {
-        return new ServerEnvelope(
+        return message(
                 "ROOM_SNAPSHOT",
                 roomId,
                 null,
@@ -43,7 +67,7 @@ public record ServerEnvelope(
             long epoch,
             String resumeToken
     ) {
-        return new ServerEnvelope(
+        return message(
                 "CONNECTION_READY",
                 roomId,
                 null,
@@ -56,13 +80,13 @@ public record ServerEnvelope(
 
     public static ServerEnvelope commandResult(
             String roomId,
-            String commandId,
+            String requestId,
             RoomExecutionResult result
     ) {
-        return new ServerEnvelope(
+        return message(
                 "COMMAND_RESULT",
                 roomId,
-                commandId,
+                requestId,
                 result.lastSequence(),
                 result.requesterSnapshot() == null ? null : result.requesterSnapshot().handId(),
                 result.connectionEpoch(),
@@ -70,11 +94,11 @@ public record ServerEnvelope(
         );
     }
 
-    public static ServerEnvelope replay(String roomId, String commandId, EventReplay replay) {
-        return new ServerEnvelope(
+    public static ServerEnvelope replay(String roomId, String requestId, EventReplay replay) {
+        return message(
                 "EVENT_REPLAY",
                 roomId,
-                commandId,
+                requestId,
                 replay.latestSequence(),
                 null,
                 null,
@@ -82,13 +106,13 @@ public record ServerEnvelope(
         );
     }
 
-    public static ServerEnvelope error(String roomId, String commandId, String code, String message) {
-        return new ServerEnvelope(
-                "ERROR", roomId, commandId, null, null, null, new ErrorPayload(code, message)
+    public static ServerEnvelope error(String roomId, String requestId, String code, String message) {
+        return message(
+                "ERROR", roomId, requestId, null, null, null, new ErrorPayload(code, message)
         );
     }
 
-    public static ServerEnvelope pong(String roomId, String commandId) {
-        return new ServerEnvelope("PONG", roomId, commandId, null, null, null, null);
+    public static ServerEnvelope pong(String roomId, String requestId) {
+        return message("PONG", roomId, requestId, null, null, null, null);
     }
 }

@@ -1,6 +1,10 @@
 package com.xidao.poker.application.room;
 
 import com.xidao.poker.application.command.PlayerActionCommand;
+import com.xidao.poker.application.command.DisconnectExpiryCommand;
+import com.xidao.poker.application.command.EmptyRoomCleanupCommand;
+import com.xidao.poker.application.command.RoomTimerCommand;
+import com.xidao.poker.application.command.RoomTimerScope;
 import com.xidao.poker.application.command.StartGameCommand;
 import com.xidao.poker.application.command.TurnTimeoutCommand;
 import com.xidao.poker.application.history.CompletedHandArchive;
@@ -13,6 +17,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.function.Supplier;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * WebSocket Handler 的唯一游戏入口。身份信息应由连接绑定关系传入，Handler 不得直接调用 GameSession。
@@ -23,6 +30,7 @@ public final class GameApplicationService {
     private final RoomRegistry registry;
     private final RoomEventDispatcher dispatcher;
     private final HandHistoryPublisher historyPublisher;
+    private final List<RoomMutationListener> mutationListeners = new CopyOnWriteArrayList<>();
 
     public GameApplicationService(RoomRegistry registry, RoomEventDispatcher dispatcher) {
         this(registry, dispatcher, NoOpHandHistoryPublisher.INSTANCE);
@@ -117,13 +125,47 @@ public final class GameApplicationService {
             String playerId,
             long connectionEpoch
     ) {
-        return executeMutation("DISCONNECT_EXPIRED", roomId, commandId, playerId,
-                () -> runtime(roomId).expireDisconnected(commandId, playerId, connectionEpoch));
+        RoomTimerScope scope = timerScope(roomId);
+        return executeTimer(new DisconnectExpiryCommand(
+                roomId, commandId, playerId, connectionEpoch, scope.handId(), scope.turnId()));
     }
 
     public RoomExecutionResult timeout(TurnTimeoutCommand command) {
-        return executeMutation("TURN_TIMEOUT", command.roomId(), command.commandId(), command.playerId(),
-                () -> runtime(command.roomId()).timeout(command));
+        return executeTimer(command);
+    }
+
+    public RoomTimerScope timerScope(String roomId) {
+        return executeRead("TIMER_SCOPE", roomId, null, () -> runtime(roomId).timerScope());
+    }
+
+    public Optional<RoomTurnTimerTarget> turnTimerTarget(String roomId) {
+        return executeRead("TURN_TIMER_TARGET", roomId, null, () -> runtime(roomId).turnTimerTarget());
+    }
+
+    public void addMutationListener(RoomMutationListener listener) {
+        if (listener == null) throw new IllegalArgumentException("mutation listener is required");
+        mutationListeners.add(listener);
+    }
+
+    /** Scheduler 的唯一玩家级变更入口；定时线程只能提交不可变命令。 */
+    public RoomExecutionResult executeTimer(RoomTimerCommand command) {
+        if (command == null) throw new IllegalArgumentException("timer command is required");
+        String operation;
+        String playerId;
+        switch (command) {
+            case TurnTimeoutCommand timeout -> {
+                operation = "TURN_TIMEOUT";
+                playerId = timeout.playerId();
+            }
+            case DisconnectExpiryCommand disconnect -> {
+                operation = "DISCONNECT_EXPIRED";
+                playerId = disconnect.playerId();
+            }
+            case EmptyRoomCleanupCommand ignored -> throw new IllegalArgumentException(
+                    "empty-room cleanup commands are owned by RoomService");
+        }
+        return executeMutation(operation, command.roomId(), command.commandId(), playerId,
+                () -> runtime(command.roomId()).executeTimer(command));
     }
 
     public GameSnapshot requestSnapshot(
@@ -177,6 +219,14 @@ public final class GameApplicationService {
                     roomId, playerId, commandId, operation, result.lastSequence(), error);
             // 房间状态已经提交，不能把发送器调度失败伪装成命令失败。
             // outbox 保留未发送内容，后续命令或恢复流程可以再次 signal。
+        }
+        for (RoomMutationListener listener : mutationListeners) {
+            try {
+                listener.afterCommittedMutation(roomId);
+            } catch (RuntimeException error) {
+                log.error("ROOM_MUTATION_LISTENER_FAILED roomId={} operation={} code={}",
+                        roomId, operation, error.getClass().getSimpleName(), error);
+            }
         }
         return result;
     }

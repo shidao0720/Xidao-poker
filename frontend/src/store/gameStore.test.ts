@@ -21,12 +21,14 @@ function snapshot(overrides: Partial<GameSnapshot> = {}): GameSnapshot {
     players: [
       {
         id: 'A', name: 'Alice', seat: 0, stack: 1_000, streetBet: 0,
-        totalContribution: 0, status: 'ACTIVE', inHand: true, canAct: true,
+        totalContribution: 0, status: 'ACTIVE', connectionStatus: 'CONNECTED',
+        seatStatus: 'SEATED', handStatus: 'ACTIVE', inHand: true, canAct: true,
         ready: true, holeCards: [],
       },
       {
         id: 'O', name: 'Observer', seat: 3, stack: 0, streetBet: 0,
-        totalContribution: 0, status: 'BUSTED', inHand: false, canAct: false,
+        totalContribution: 0, status: 'BUSTED', connectionStatus: 'CONNECTED',
+        seatStatus: 'BUSTED', handStatus: 'NOT_IN_HAND', inHand: false, canAct: false,
         ready: false, holeCards: [],
       },
     ],
@@ -95,6 +97,9 @@ describe('game snapshot synchronization', () => {
         streetBet: 0,
         totalContribution: 0,
         status: 'ACTIVE',
+        connectionStatus: 'CONNECTED',
+        seatStatus: 'SEATED',
+        handStatus: 'NOT_IN_HAND',
         inHand: false,
         canAct: false,
         ready: false,
@@ -113,6 +118,9 @@ describe('game snapshot synchronization', () => {
       streetBet: 0,
       totalContribution: 0,
       status: 'ACTIVE',
+      connectionStatus: 'CONNECTED',
+      seatStatus: 'SEATED',
+      handStatus: 'NOT_IN_HAND',
       inHand: false,
       canAct: false,
       ready: false,
@@ -130,13 +138,19 @@ describe('game snapshot synchronization', () => {
     expect(next.players.find((player) => player.id === 'O')).toMatchObject({ status: 'BUSTED', canAct: false })
   })
 
-  it('marks a disconnected actor unable to act using the server event', () => {
+  it('keeps all-in hand state orthogonal when the player disconnects', () => {
     const next = reduceGameEvent(snapshot(), event({
       type: 'PLAYER_DISCONNECTED',
-      data: { seat: 0, forfeitedHand: true },
+      data: { seat: 0, forfeitedHand: false, handStatus: 'ALL_IN' },
     }))
 
-    expect(next.players[0]).toMatchObject({ status: 'DISCONNECTED', canAct: false })
+    expect(next.players[0]).toMatchObject({
+      status: 'DISCONNECTED',
+      connectionStatus: 'DISCONNECTED',
+      seatStatus: 'SEATED',
+      handStatus: 'ALL_IN',
+      canAct: false,
+    })
   })
 
   it('stores the server-authored showdown category without evaluating cards in the client', () => {
