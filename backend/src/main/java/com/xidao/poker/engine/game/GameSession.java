@@ -257,6 +257,7 @@ public final class GameSession {
                 playerSnapshots,
                 currentHand == null ? ActionOptions.none() : currentHand.actionOptions(viewerId),
                 currentHand == null ? List.of() : currentHand.awards(),
+                currentHand == null ? List.of() : currentHand.revealedHands(),
                 sequence
         );
     }

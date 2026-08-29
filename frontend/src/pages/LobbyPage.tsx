@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { roomApi } from '../api/rooms'
+import { LobbySignalField } from '../components/LobbySignalField'
 import type { CreateRoomInput, GamePhase, RoomSummary } from '../types/protocol'
 import { getPlayerName, savePlayerName } from '../utils/identity'
 
@@ -77,6 +78,7 @@ export function LobbyPage() {
 
   return (
     <main className="lobby-shell">
+      <LobbySignalField />
       <header className="lobby-header">
         <a className="brand" href="/" aria-label="Xidao Poker 大厅">
           <span className="brand-mark">X</span>
@@ -97,16 +99,12 @@ export function LobbyPage() {
       </header>
 
       <section className="lobby-hero">
-        <div>
-          <p className="eyebrow">LOCAL TABLE · REAL-TIME PLAY</p>
-          <h1>同一张桌，<br /><em>零距离开局。</em></h1>
-          <p>为局域网聚会打造的德州扑克。服务端裁决每一步规则，最多十人同时入座。</p>
-        </div>
-        <div className="hero-stats" aria-label="项目特性">
-          <div><strong>10</strong><span>最大座位</span></div>
-          <div><strong>30s</strong><span>断线保护</span></div>
-          <div><strong>52</strong><span>标准牌组</span></div>
-        </div>
+        <img
+          className="lobby-logo-artwork"
+          src="/assets/images/ui/fate-stay-poker-logo.png"
+          alt="Fate stay poker"
+          draggable="false"
+        />
       </section>
 
       {error && <div className="alert" role="alert"><span>!</span>{error}<button onClick={() => setError(null)}>关闭</button></div>}
@@ -114,15 +112,15 @@ export function LobbyPage() {
       <div className="lobby-grid">
         <section className="room-section">
           <div className="section-heading">
-            <div><span className="eyebrow">GAME LOBBY</span><h2>正在等待的牌桌</h2></div>
+            <h2>牌桌大厅</h2>
             <button className="ghost-button" onClick={() => void loadRooms()} disabled={loading}>刷新</button>
           </div>
 
           <div className="room-list" aria-live="polite">
             {loading && rooms.length === 0 ? (
-              <div className="empty-state"><div className="loader" /><p>正在寻找局域网牌桌…</p></div>
+              <div className="empty-state" aria-label="正在加载牌桌"><div className="loader" /></div>
             ) : rooms.length === 0 ? (
-              <div className="empty-state"><span className="empty-suits">♠ ♥ ♦ ♣</span><h3>大厅还是空的</h3><p>创建第一张牌桌，朋友们就能通过局域网加入。</p></div>
+              <div className="empty-state"><span className="empty-suits">♠ ♥ ♦ ♣</span><h3>暂无牌桌</h3></div>
             ) : rooms.map((room) => (
               <article className="room-card" key={room.roomId}>
                 <div className="room-card-top">
@@ -146,9 +144,7 @@ export function LobbyPage() {
         </section>
 
         <aside className="create-panel">
-          <span className="eyebrow">HOST A TABLE</span>
           <h2>创建新牌桌</h2>
-          <p>设置本场规则。开局后，新加入的玩家会安全进入观战状态。</p>
           <form onSubmit={(event) => void createRoom(event)}>
             <label><span>房间名称</span><input id="room-name" name="roomName" required maxLength={40} value={form.roomName} onChange={(event) => setForm({ ...form, roomName: event.target.value })} /></label>
             <div className="form-row">

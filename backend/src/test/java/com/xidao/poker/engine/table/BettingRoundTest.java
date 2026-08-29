@@ -43,6 +43,31 @@ class BettingRoundTest {
     }
 
     @Test
+    void bigBlindOptionAllowsCheckOrRaiseAfterSmallBlindCalls() {
+        Player smallBlind = player("SB", 0, 1_000);
+        Player bigBlind = player("BB", 1, 1_000);
+        smallBlind.contribute(10);
+        bigBlind.contribute(20);
+        BettingRound round = new BettingRound(List.of(smallBlind, bigBlind), 0, 20, 20, 10);
+
+        round.act(PlayerAction.call("SB"));
+
+        assertThat(round.actorSeat()).isEqualTo(1);
+        assertThat(round.legalActions("BB"))
+                .contains(ActionType.CHECK, ActionType.RAISE, ActionType.ALL_IN)
+                .doesNotContain(ActionType.CALL, ActionType.BET, ActionType.FOLD);
+        assertThat(round.actionOptions("BB").toCall()).isZero();
+        assertThat(round.actionOptions("BB").minimumRaiseTo()).isEqualTo(40);
+        assertThat(round.actionOptions("BB").maximumTo()).isEqualTo(1_000);
+
+        BettingActionResult raise = round.act(PlayerAction.raiseTo("BB", 40));
+
+        assertThat(raise.fullRaise()).isTrue();
+        assertThat(round.currentBet()).isEqualTo(40);
+        assertThat(round.actorSeat()).isEqualTo(0);
+    }
+
+    @Test
     void fullRaiseUpdatesMinimumAndMakesOthersActAgain() {
         Player a = player("A", 0, 1_000);
         Player b = player("B", 1, 1_000);

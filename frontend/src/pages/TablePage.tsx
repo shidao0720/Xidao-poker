@@ -1,26 +1,22 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ActionBar } from '../components/ActionBar'
 import { CardView } from '../components/CardView'
 import { ConnectionBadge } from '../components/ConnectionBadge'
 import { PlayerSeat } from '../components/PlayerSeat'
+import {
+  AllInBroadcast,
+  DeckStack,
+  SettlementOverlay,
+  SettlementTransfer,
+  SETTLEMENT_VERDICT_MAX_MS,
+  settlementTransferDuration,
+} from '../components/TableEffects'
 import { useGameStore } from '../store/gameStore'
-import type { ActionType, GamePhase } from '../types/protocol'
+import type { ActionType, GamePhase, GameSnapshot, PlayerStatus } from '../types/protocol'
 import { getPlayerId, getPlayerName } from '../utils/identity'
+import { positionPlayersForViewer } from '../utils/seatLayout'
 import { PokerSocket } from '../ws/PokerSocket'
-
-const seatPositions = [
-  { x: 50, y: 91 },
-  { x: 23, y: 86 },
-  { x: 7, y: 67 },
-  { x: 7, y: 34 },
-  { x: 25, y: 12 },
-  { x: 50, y: 7 },
-  { x: 75, y: 12 },
-  { x: 93, y: 34 },
-  { x: 93, y: 67 },
-  { x: 77, y: 86 },
-]
 
 const phaseLabels: Record<GamePhase, string> = {
   WAITING: '等待玩家',
@@ -35,6 +31,14 @@ const phaseLabels: Record<GamePhase, string> = {
   ROUND_END: '本手结束',
 }
 
+interface SettlementAnimation {
+  handId: number
+  progress: number
+  duration: number
+  winnings: Record<string, number>
+  active: boolean
+}
+
 export function TablePage() {
   const { roomId } = useParams()
   const navigate = useNavigate()
@@ -42,6 +46,17 @@ export function TablePage() {
   const playerId = useMemo(getPlayerId, [])
   const playerName = useMemo(getPlayerName, [])
   const { snapshot, connection, lastError, notice, setError, setNotice, reset } = useGameStore()
+  const [allInVisible, setAllInVisible] = useState(false)
+  const [dismissedSettlementHand, setDismissedSettlementHand] = useState<number | null>(null)
+  const [settlementAnimation, setSettlementAnimation] = useState<SettlementAnimation | null>(null)
+  const previousSelfStatus = useRef<PlayerStatus | undefined>(undefined)
+  const previousHandId = useRef<number | undefined>(undefined)
+  const settlementFrame = useRef<number | null>(null)
+  const settlementStartedHand = useRef<number | null>(null)
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 })
+  }, [])
 
   useEffect(() => {
     if (!roomId || !playerName) {
@@ -69,6 +84,85 @@ export function TablePage() {
   const allReady = eligiblePlayers.length >= 2 && eligiblePlayers.every((player) => player.ready)
   const canStart = isOwner && allReady && ['WAITING', 'READY', 'ROUND_END'].includes(snapshot?.phase ?? '')
   const observing = self?.status === 'SPECTATOR' || self?.status === 'BUSTED' || self?.status === 'DISCONNECTED'
+  const positionedPlayers = snapshot ? positionPlayersForViewer(snapshot.players, playerId) : []
+  const settlementVisible = Boolean(
+    snapshot
+    && snapshot.awards.length > 0
+    && (snapshot.phase === 'SETTLEMENT' || snapshot.phase === 'ROUND_END')
+    && dismissedSettlementHand !== snapshot.handId,
+  )
+
+  const startSettlementTransfer = useCallback((settledSnapshot: GameSnapshot) => {
+    if (settlementStartedHand.current === settledSnapshot.handId) {
+      setDismissedSettlementHand(settledSnapshot.handId)
+      return
+    }
+
+    const winnings: Record<string, number> = {}
+    settledSnapshot.awards.forEach((award) => {
+      Object.entries(award.winnings).forEach(([winnerId, amount]) => {
+        winnings[winnerId] = (winnings[winnerId] ?? 0) + amount
+      })
+    })
+    const totalAwarded = Object.values(winnings).reduce((total, amount) => total + amount, 0)
+    if (totalAwarded <= 0) return
+
+    settlementStartedHand.current = settledSnapshot.handId
+    setDismissedSettlementHand(settledSnapshot.handId)
+    const duration = settlementTransferDuration(totalAwarded)
+    const handId = settledSnapshot.handId
+    const startedAt = performance.now()
+    setSettlementAnimation({ handId, progress: 0, duration, winnings, active: true })
+
+    const tick = (now: number) => {
+      const linearProgress = Math.min(1, Math.max(0, (now - startedAt) / duration))
+      setSettlementAnimation((current) => current?.handId === handId
+        ? { ...current, progress: linearProgress, active: linearProgress < 1 }
+        : current)
+      if (linearProgress < 1) settlementFrame.current = window.requestAnimationFrame(tick)
+      else settlementFrame.current = null
+    }
+    settlementFrame.current = window.requestAnimationFrame(tick)
+  }, [])
+
+  useEffect(() => {
+    const handId = snapshot?.handId
+    const status = self?.status
+    if (handId !== previousHandId.current) {
+      if (settlementFrame.current !== null) window.cancelAnimationFrame(settlementFrame.current)
+      settlementFrame.current = null
+      settlementStartedHand.current = null
+      setSettlementAnimation(null)
+      setDismissedSettlementHand(null)
+      previousHandId.current = handId
+      previousSelfStatus.current = status
+      setAllInVisible(false)
+      return
+    }
+    const becameAllIn = previousSelfStatus.current !== undefined
+      && previousSelfStatus.current !== 'ALL_IN'
+      && status === 'ALL_IN'
+    previousSelfStatus.current = status
+    if (!becameAllIn) return
+
+    setAllInVisible(true)
+    const timer = window.setTimeout(() => setAllInVisible(false), 3_200)
+    return () => window.clearTimeout(timer)
+  }, [self?.status, snapshot?.handId])
+
+  useEffect(() => () => {
+    if (settlementFrame.current !== null) window.cancelAnimationFrame(settlementFrame.current)
+  }, [])
+
+  useEffect(() => {
+    if (!settlementVisible || !snapshot) return
+    const settledSnapshot = snapshot
+    const timer = window.setTimeout(
+      () => startSettlementTransfer(settledSnapshot),
+      SETTLEMENT_VERDICT_MAX_MS,
+    )
+    return () => window.clearTimeout(timer)
+  }, [settlementVisible, snapshot, startSettlementTransfer])
 
   function leaveRoom() {
     socketRef.current?.leave()
@@ -81,6 +175,11 @@ export function TablePage() {
   }
 
   if (!roomId) return null
+
+  const currentSettlement = settlementAnimation?.handId === snapshot?.handId ? settlementAnimation : null
+  const displayedPot = snapshot && currentSettlement
+    ? Math.max(0, Math.round(snapshot.pot * (1 - currentSettlement.progress)))
+    : snapshot?.pot ?? 0
 
   return (
     <main className="table-shell">
@@ -99,12 +198,12 @@ export function TablePage() {
       {!snapshot ? (
         <section className="table-loading">
           <div className="chip-loader"><span /><span /><span /></div>
-          <h1>{connection === 'reconnecting' ? '正在恢复你的座位' : '正在进入牌桌'}</h1>
-          <p>服务端将发送只属于你的安全快照。</p>
+          <h1>{connection === 'reconnecting' ? '正在恢复座位' : '正在进入牌桌'}</h1>
         </section>
       ) : (
         <>
           <section className="poker-room" aria-label="德州扑克牌桌">
+            <div className="table-ritual-grid" aria-hidden="true" />
             <div className="table-meta">
               <span>{phaseLabels[snapshot.phase]}</span>
               <strong>第 {Math.max(snapshot.handId, 1)} 手</strong>
@@ -112,52 +211,80 @@ export function TablePage() {
             <div className="poker-table">
               <div className="felt-ring" aria-hidden="true" />
               <div className="table-center">
-                <div className="pot-display"><small>总底池</small><strong>{snapshot.pot.toLocaleString()}</strong></div>
+                <div className="pot-row">
+                  <div
+                    className={`pot-display${currentSettlement?.active ? ' is-draining' : ''}`}
+                    data-pot-anchor
+                  >
+                    <small>总底池</small><strong>{displayedPot.toLocaleString()}</strong>
+                  </div>
+                  <DeckStack handId={snapshot.handId} phase={snapshot.phase} />
+                </div>
                 <div className="community-cards" aria-label="公共牌">
                   {Array.from({ length: 5 }, (_, index) => (
                     snapshot.communityCards[index]
-                      ? <CardView card={snapshot.communityCards[index]} key={index} />
+                      ? <CardView card={snapshot.communityCards[index]} dealing dealDelay={index * 110} key={index} />
                       : <div className="card-slot" key={index} aria-hidden="true" />
                   ))}
                 </div>
-                <div className="street-label">{phaseLabels[snapshot.phase]}</div>
               </div>
-              {snapshot.players.map((player) => (
-                <PlayerSeat
-                  key={player.id}
-                  player={player}
-                  isActor={player.seat === snapshot.currentActorSeat}
-                  isOwner={player.id === snapshot.ownerId}
-                  isSelf={player.id === playerId}
-                  position={seatPositions[player.seat % seatPositions.length] ?? seatPositions[0]!}
-                />
+              {positionedPlayers.map(({ player, position }) => (
+                (() => {
+                  const winnings = currentSettlement?.winnings[player.id] ?? 0
+                  const displayStack = currentSettlement
+                    ? Math.round(player.stack - winnings + winnings * currentSettlement.progress)
+                    : player.stack
+                  return (
+                    <PlayerSeat
+                      key={`${player.id}-${snapshot.handId}`}
+                      player={player}
+                      isActor={player.seat === snapshot.currentActorSeat}
+                      isOwner={player.id === snapshot.ownerId}
+                      isSelf={player.id === playerId}
+                      position={position}
+                      displayStack={displayStack}
+                      stackAnimating={Boolean(currentSettlement?.active && winnings > 0)}
+                    />
+                  )
+                })()
               ))}
             </div>
           </section>
 
-          <section className="table-controls">
-            <div className="hand-status">
-              {observing ? (
-                <><span className="watch-icon">◉</span><div><strong>观战模式</strong><small>你不在本手行动队列中，不会阻塞游戏</small></div></>
-              ) : snapshot.currentActorSeat === self?.seat ? (
-                <><span className="turn-icon">↗</span><div><strong>轮到你行动</strong><small>请按服务端给出的合法操作选择</small></div></>
-              ) : (
-                <><span className="watch-icon">◎</span><div><strong>{snapshot.currentActorSeat === null ? phaseLabels[snapshot.phase] : '等待其他玩家'}</strong><small>{self?.ready ? '你已准备' : '牌桌状态由服务端实时同步'}</small></div></>
+          {(observing || (['WAITING', 'READY', 'ROUND_END'].includes(snapshot.phase) && canReady) || canStart) && (
+            <section className="table-controls">
+              {observing && <span className="mode-badge">观战</span>}
+              {['WAITING', 'READY', 'ROUND_END'].includes(snapshot.phase) && canReady && (
+                <button className={`ready-button${self.ready ? ' is-ready' : ''}`} onClick={() => socketRef.current?.setReady(!self.ready)}>
+                  {self.ready ? '取消准备' : '准备'}
+                </button>
               )}
-            </div>
-            {['WAITING', 'READY', 'ROUND_END'].includes(snapshot.phase) && canReady && (
-              <button className={`ready-button${self.ready ? ' is-ready' : ''}`} onClick={() => socketRef.current?.setReady(!self.ready)}>
-                {self.ready ? '取消准备' : '准备'}
-              </button>
-            )}
-            {canStart && (
-              <button className="start-button" onClick={() => socketRef.current?.startGame(snapshot.handId)}>
-                {snapshot.handId > 0 ? '开始下一手' : '房主开始游戏'}
-              </button>
-            )}
-          </section>
+              {canStart && (
+                <button className="start-button" onClick={() => socketRef.current?.startGame(snapshot.handId)}>
+                  {snapshot.handId > 0 ? '开始下一手' : '开始游戏'}
+                </button>
+              )}
+            </section>
+          )}
 
           <ActionBar snapshot={snapshot} playerId={playerId} onAction={act} />
+          <AllInBroadcast
+            visible={allInVisible}
+            amount={self?.totalContribution ?? 0}
+            onDismiss={() => setAllInVisible(false)}
+          />
+          <SettlementOverlay
+            snapshot={snapshot}
+            playerId={playerId}
+            visible={settlementVisible}
+            onClose={() => startSettlementTransfer(snapshot)}
+          />
+          <SettlementTransfer
+            active={Boolean(currentSettlement?.active)}
+            handId={snapshot.handId}
+            duration={currentSettlement?.duration ?? 500}
+            winnings={currentSettlement?.winnings ?? {}}
+          />
         </>
       )}
     </main>

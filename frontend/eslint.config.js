@@ -7,6 +7,13 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ['design-showcase/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      globals: { ...globals.browser, ...globals.es2023 },
+    },
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2023,

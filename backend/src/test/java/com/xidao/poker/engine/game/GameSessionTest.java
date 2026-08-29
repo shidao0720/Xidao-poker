@@ -234,6 +234,28 @@ class GameSessionTest {
     }
 
     @Test
+    void settledSnapshotCarriesAuthoritativeWinnerCategoryAndVisibleCards() {
+        GameSession session = startedThreePlayerSession();
+        playPassivelyUntilSettled(session);
+
+        GameSnapshot settled = session.snapshot("A");
+        Set<String> winnerIds = settled.awards().stream()
+                .flatMap(award -> award.winnings().keySet().stream())
+                .collect(java.util.stream.Collectors.toSet());
+
+        assertThat(settled.revealedHands())
+                .filteredOn(result -> winnerIds.contains(result.playerId()))
+                .isNotEmpty()
+                .allSatisfy(result -> {
+                    assertThat(result.category()).isNotNull();
+                    assertThat(result.bestCards()).hasSize(5);
+                });
+        assertThat(settled.players())
+                .filteredOn(player -> winnerIds.contains(player.id()))
+                .allSatisfy(player -> assertThat(player.holeCards()).hasSize(2));
+    }
+
+    @Test
     void deterministicSeedReproducesTheSamePrivateDeal() {
         GameSession first = session(CONFIG, 4242L, "A", "B", "C");
         GameSession second = session(CONFIG, 4242L, "A", "B", "C");

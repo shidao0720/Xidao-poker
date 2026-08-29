@@ -35,6 +35,7 @@ function snapshot(overrides: Partial<GameSnapshot> = {}): GameSnapshot {
       minimumBetTo: null, minimumRaiseTo: 40, maximumTo: 1_000,
     },
     awards: [],
+    revealedHands: [],
     lastSequence: 10,
     ...overrides,
   }
@@ -60,6 +61,15 @@ describe('game snapshot synchronization', () => {
 
     expect(useGameStore.getState().snapshot?.players).toEqual([])
     expect(useGameStore.getState().snapshot?.lastSequence).toBe(30)
+  })
+
+  it('normalizes snapshots from an older backend that omit revealedHands', () => {
+    const legacySnapshot = snapshot()
+    delete (legacySnapshot as Partial<GameSnapshot>).revealedHands
+
+    useGameStore.getState().replaceSnapshot(legacySnapshot)
+
+    expect(useGameStore.getState().snapshot?.revealedHands).toEqual([])
   })
 
   it('detects a sequence gap without mutating state', () => {
@@ -127,5 +137,30 @@ describe('game snapshot synchronization', () => {
     }))
 
     expect(next.players[0]).toMatchObject({ status: 'DISCONNECTED', canAct: false })
+  })
+
+  it('stores the server-authored showdown category without evaluating cards in the client', () => {
+    const revealedHands = [{
+      playerId: 'A',
+      showdown: true,
+      category: 'STRAIGHT' as const,
+      holeCards: [
+        { rank: 'ACE' as const, suit: 'SPADES' as const },
+        { rank: 'KING' as const, suit: 'HEARTS' as const },
+      ],
+      bestCards: [
+        { rank: 'ACE' as const, suit: 'SPADES' as const },
+        { rank: 'KING' as const, suit: 'HEARTS' as const },
+        { rank: 'QUEEN' as const, suit: 'CLUBS' as const },
+        { rank: 'JACK' as const, suit: 'DIAMONDS' as const },
+        { rank: 'TEN' as const, suit: 'SPADES' as const },
+      ],
+    }]
+    const next = reduceGameEvent(snapshot(), event({
+      type: 'SETTLEMENT',
+      data: { awards: [{ potAmount: 30, winnings: { A: 30 } }], revealedHands },
+    }))
+
+    expect(next.revealedHands).toEqual(revealedHands)
   })
 })

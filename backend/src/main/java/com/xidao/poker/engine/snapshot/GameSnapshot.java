@@ -28,6 +28,7 @@ public record GameSnapshot(
         List<PlayerSnapshot> players,
         ActionOptions actionOptions,
         List<PotAward> awards,
+        List<RevealedHandSnapshot> revealedHands,
         long lastSequence
 ) {
     public GameSnapshot {
@@ -36,6 +37,7 @@ public record GameSnapshot(
         players = players == null ? List.of() : List.copyOf(players);
         actionOptions = actionOptions == null ? ActionOptions.none() : actionOptions;
         awards = awards == null ? List.of() : List.copyOf(awards);
+        revealedHands = revealedHands == null ? List.of() : List.copyOf(revealedHands);
     }
 
     /** 保留便利访问器，调用方无需从 ActionOptions 再取一次集合。 */

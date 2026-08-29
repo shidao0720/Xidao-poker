@@ -54,6 +54,29 @@ class HandTest {
     }
 
     @Test
+    void headsUpBigBlindCanCheckOrRaiseAfterSmallBlindCalls() {
+        Player smallBlindButton = player("SB", 0, 1_000);
+        Player bigBlind = player("BB", 5, 1_000);
+        Hand hand = new Hand(1, CONFIG, List.of(smallBlindButton, bigBlind), 0, 17L);
+        hand.start();
+
+        hand.handle(PlayerAction.call("SB"));
+
+        assertThat(hand.currentActorSeat()).isEqualTo(5);
+        assertThat(hand.actionOptions("BB").legalActions())
+                .contains(ActionType.CHECK, ActionType.RAISE, ActionType.ALL_IN)
+                .doesNotContain(ActionType.CALL, ActionType.BET, ActionType.FOLD);
+        assertThat(hand.actionOptions("BB").toCall()).isZero();
+        assertThat(hand.actionOptions("BB").minimumRaiseTo()).isEqualTo(40);
+        assertThat(hand.actionOptions("BB").maximumTo()).isEqualTo(1_000);
+
+        hand.handle(PlayerAction.raiseTo("BB", 40));
+
+        assertThat(hand.currentBet()).isEqualTo(40);
+        assertThat(hand.currentActorSeat()).isEqualTo(0);
+    }
+
+    @Test
     void playerActionEventCarriesProjectionStatusForIncrementalClients() {
         Player actor = player("A", 0, 1_000);
         Player smallBlind = player("B", 1, 1_000);
@@ -216,6 +239,32 @@ class HandTest {
         playPassivelyUntilSettled(hand);
         assertThat(hand.visibleHoleCards("spectator", "A")).hasSize(2);
         assertThat(hand.visibleHoleCards("spectator", "B")).hasSize(2);
+        assertThat(hand.revealedHands()).hasSize(2).allSatisfy(result -> {
+            assertThat(result.showdown()).isTrue();
+            assertThat(result.category()).isNotNull();
+            assertThat(result.holeCards()).hasSize(2);
+            assertThat(result.bestCards()).hasSize(5);
+        });
+    }
+
+    @Test
+    void uncontestedWinnerIsRevealedWithoutInventingAPreflopHandCategory() {
+        Player button = player("A", 0, 1_000);
+        Player bigBlind = player("B", 1, 1_000);
+        Hand hand = new Hand(1, CONFIG, List.of(button, bigBlind), 0, 188L);
+        hand.start();
+
+        hand.handle(PlayerAction.fold("A"));
+
+        assertThat(hand.phase()).isEqualTo(GamePhase.ROUND_END);
+        assertThat(hand.visibleHoleCards("A", "B")).hasSize(2);
+        assertThat(hand.revealedHands()).singleElement().satisfies(result -> {
+            assertThat(result.playerId()).isEqualTo("B");
+            assertThat(result.showdown()).isFalse();
+            assertThat(result.category()).isNull();
+            assertThat(result.holeCards()).hasSize(2);
+            assertThat(result.bestCards()).isEmpty();
+        });
     }
 
     private static List<com.xidao.poker.engine.event.GameEvent> playPassivelyUntilSettled(Hand hand) {

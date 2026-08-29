@@ -19,6 +19,16 @@ export type PlayerStatus =
   | 'BUSTED'
 
 export type ActionType = 'FOLD' | 'CHECK' | 'CALL' | 'BET' | 'RAISE' | 'ALL_IN'
+export type HandCategory =
+  | 'HIGH_CARD'
+  | 'ONE_PAIR'
+  | 'TWO_PAIR'
+  | 'THREE_OF_A_KIND'
+  | 'STRAIGHT'
+  | 'FLUSH'
+  | 'FULL_HOUSE'
+  | 'FOUR_OF_A_KIND'
+  | 'STRAIGHT_FLUSH'
 export type Rank =
   | 'TWO'
   | 'THREE'
@@ -48,6 +58,14 @@ export interface Pot {
 export interface PotAward {
   potAmount: number
   winnings: Record<string, number>
+}
+
+export interface RevealedHandSnapshot {
+  playerId: string
+  showdown: boolean
+  category: HandCategory | null
+  holeCards: Card[]
+  bestCards: Card[]
 }
 
 export interface PlayerSnapshot {
@@ -91,6 +109,7 @@ export interface GameSnapshot {
   players: PlayerSnapshot[]
   actionOptions: ActionOptions
   awards: PotAward[]
+  revealedHands: RevealedHandSnapshot[]
   lastSequence: number
 }
 

@@ -8,6 +8,7 @@ import type {
   PlayerSnapshot,
   PlayerStatus,
   PotAward,
+  RevealedHandSnapshot,
 } from '../types/protocol'
 
 export type EventApplyResult = 'applied' | 'duplicate' | 'gap' | 'no-snapshot'
@@ -63,6 +64,10 @@ function statusValue(value: unknown): PlayerStatus | undefined {
   return stringValue(value) as PlayerStatus | undefined
 }
 
+function revealedHandsValue(value: unknown): RevealedHandSnapshot[] | undefined {
+  return Array.isArray(value) ? value as RevealedHandSnapshot[] : undefined
+}
+
 function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
   const id = event.playerId
   const name = stringValue(event.data.name)
@@ -103,7 +108,11 @@ function upsertPlayer(players: PlayerSnapshot[], player: PlayerSnapshot): Player
 
 export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameSnapshot {
   const data = event.data
-  let next: GameSnapshot = { ...snapshot, lastSequence: event.sequence }
+  let next: GameSnapshot = {
+    ...snapshot,
+    revealedHands: snapshot.revealedHands ?? [],
+    lastSequence: event.sequence,
+  }
 
   switch (event.type) {
     case 'PLAYER_JOINED': {
@@ -141,6 +150,7 @@ export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameS
         buttonSeat: numberValue(data.buttonSeat) ?? next.buttonSeat,
         communityCards: [],
         awards: [],
+        revealedHands: [],
       }
       break
     case 'PLAYER_ACTION': {
@@ -222,11 +232,28 @@ export function reduceGameEvent(snapshot: GameSnapshot, event: GameEvent): GameS
         })),
       }
       break
-    case 'SETTLEMENT':
-      if (Array.isArray(data.awards)) next = { ...next, awards: data.awards as PotAward[] }
+    case 'SHOWDOWN': {
+      const revealedHands = revealedHandsValue(data.revealedHands)
+      if (revealedHands) next = { ...next, revealedHands }
       break
+    }
+    case 'SETTLEMENT': {
+      const revealedHands = revealedHandsValue(data.revealedHands)
+      next = {
+        ...next,
+        awards: Array.isArray(data.awards) ? data.awards as PotAward[] : next.awards,
+        revealedHands: revealedHands ?? next.revealedHands,
+      }
+      break
+    }
     case 'HAND_ENDED':
-      next = { ...next, phase: 'ROUND_END', currentActorSeat: null, actionOptions: noActions }
+      next = {
+        ...next,
+        phase: 'ROUND_END',
+        currentActorSeat: null,
+        actionOptions: noActions,
+        revealedHands: revealedHandsValue(data.revealedHands) ?? next.revealedHands,
+      }
       break
     default:
       break
@@ -245,7 +272,10 @@ const initialState = {
 export const useGameStore = create<GameState>((set, get) => ({
   ...initialState,
   setConnection: (connection) => set({ connection }),
-  replaceSnapshot: (snapshot) => set({ snapshot, lastError: null }),
+  replaceSnapshot: (snapshot) => set({
+    snapshot: { ...snapshot, revealedHands: snapshot.revealedHands ?? [] },
+    lastError: null,
+  }),
   applyEvent: (event) => {
     const snapshot = get().snapshot
     if (!snapshot) return 'no-snapshot'

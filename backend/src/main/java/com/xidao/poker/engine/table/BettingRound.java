@@ -120,9 +120,11 @@ public final class BettingRound {
         } else {
             actions.add(ActionType.FOLD);
             actions.add(ActionType.CALL);
-            if (raiseReopened && allInTarget - currentBet >= minRaise) {
-                actions.add(ActionType.RAISE);
-            }
+        }
+        // 已跟平不等于已经失去加注权。典型场景是 Preflop 所有人补齐大盲后，
+        // 尚未主动行动的大盲可选择 Check，也可从当前大盲注做一次完整 Raise。
+        if (currentBet > 0 && raiseReopened && allInTarget - currentBet >= minRaise) {
+            actions.add(ActionType.RAISE);
         }
         return Set.copyOf(actions);
     }

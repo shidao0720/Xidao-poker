@@ -107,7 +107,7 @@ class WebSocketRoomDeliverySinkTest {
                 "room", "A", 0, GamePhase.WAITING,
                 null, null, null, null, 0,
                 0, 10, 0, List.of(), List.of(), List.of(),
-                ActionOptions.none(), List.of(), sequence
+                ActionOptions.none(), List.of(), List.of(), sequence
         );
     }
 

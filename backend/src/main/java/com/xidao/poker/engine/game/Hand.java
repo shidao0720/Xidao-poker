@@ -19,6 +19,7 @@ import com.xidao.poker.engine.pot.Pot;
 import com.xidao.poker.engine.pot.PotAward;
 import com.xidao.poker.engine.pot.PotManager;
 import com.xidao.poker.engine.snapshot.ActionOptions;
+import com.xidao.poker.engine.snapshot.RevealedHandSnapshot;
 import com.xidao.poker.engine.table.BettingActionResult;
 import com.xidao.poker.engine.table.BettingRound;
 
@@ -51,6 +52,8 @@ public final class Hand {
     private final List<CompletedHandAction> acceptedActions = new ArrayList<>();
     private final Map<String, Long> showdownHandKeys = new LinkedHashMap<>();
     private final Map<String, String> showdownCategories = new LinkedHashMap<>();
+    private final Map<String, HandResult> evaluatedHands = new LinkedHashMap<>();
+    private final Set<String> settlementWinnerIds = new LinkedHashSet<>();
     private List<GameEvent> emittedEvents;
     private List<Pot> settledPots = List.of();
     private List<PotAward> awards = List.of();
@@ -301,9 +304,18 @@ public final class Hand {
         settledPots = List.of(new Pot(amount, List.of(winner.id())));
         winner.addWinnings(amount);
         awards = List.of(new PotAward(amount, Map.of(winner.id(), amount)));
+        settlementWinnerIds.add(winner.id());
+        // 五张公共牌齐全时，即使其余玩家在河牌圈弃牌，也可由服务端诚实评估胜者牌型。
+        if (communityCards.size() == 5) {
+            evaluatedHands.put(winner.id(), HandEvaluator.bestHand(
+                    winner.holeCards().toArray(Card[]::new),
+                    communityCards.toArray(Card[]::new)
+            ));
+        }
         emit(GameEventType.SETTLEMENT, winner.id(), Map.of(
                 "showdown", false,
-                "awards", awards
+                "awards", awards,
+                "revealedHands", revealedHands()
         ));
         finishHand();
     }
@@ -315,20 +327,24 @@ public final class Hand {
             HandResult result = HandEvaluator.bestHand(player.holeCards().toArray(Card[]::new), board);
             showdownHandKeys.put(player.id(), result.key());
             showdownCategories.put(player.id(), result.category().name());
+            evaluatedHands.put(player.id(), result);
             showdownPlayerIds.add(player.id());
         }
         emit(GameEventType.SHOWDOWN, null, Map.of(
                 "handKeys", Map.copyOf(showdownHandKeys),
-                "categories", Map.copyOf(showdownCategories)
+                "categories", Map.copyOf(showdownCategories),
+                "revealedHands", revealedHands()
         ));
 
         transitionTo(GamePhase.SETTLEMENT);
         settledPots = PotManager.buildPots(participants);
         awards = PotManager.settle(
                 settledPots, participants, showdownHandKeys, buttonSeat, config.maxPlayers());
+        awards.forEach(award -> settlementWinnerIds.addAll(award.winnings().keySet()));
         emit(GameEventType.SETTLEMENT, null, Map.of(
                 "showdown", true,
-                "awards", awards
+                "awards", awards,
+                "revealedHands", revealedHands()
         ));
         finishHand();
     }
@@ -349,7 +365,8 @@ public final class Hand {
         transitionTo(GamePhase.ROUND_END);
         emit(GameEventType.HAND_ENDED, null, Map.of(
                 "pot", potAmount(),
-                "awards", awards
+                "awards", awards,
+                "revealedHands", revealedHands()
         ));
     }
 
@@ -519,6 +536,20 @@ public final class Hand {
     public List<Card> communityCards() { return List.copyOf(communityCards); }
     public List<Player> participants() { return List.copyOf(participants); }
     public List<PotAward> awards() { return awards; }
+    public List<RevealedHandSnapshot> revealedHands() {
+        LinkedHashSet<String> revealedIds = new LinkedHashSet<>(settlementWinnerIds);
+        revealedIds.addAll(showdownPlayerIds);
+        return revealedIds.stream().map(playerId -> {
+            HandResult result = evaluatedHands.get(playerId);
+            return new RevealedHandSnapshot(
+                    playerId,
+                    showdownPlayerIds.contains(playerId),
+                    result == null ? null : result.category(),
+                    playersById.get(playerId).holeCards(),
+                    result == null ? List.of() : List.of(result.bestCards())
+            );
+        }).toList();
+    }
 
     CompletedHandSnapshot completedSnapshot(String sessionId) {
         if (completedPlayers.isEmpty() || phase != GamePhase.ROUND_END) {
@@ -555,7 +586,9 @@ public final class Hand {
     public List<Card> visibleHoleCards(String viewerId, String targetPlayerId) {
         Player target = playersById.get(targetPlayerId);
         if (target == null) return List.of();
-        if (targetPlayerId.equals(viewerId) || showdownPlayerIds.contains(targetPlayerId)) {
+        if (targetPlayerId.equals(viewerId)
+                || showdownPlayerIds.contains(targetPlayerId)
+                || settlementWinnerIds.contains(targetPlayerId)) {
             return target.holeCards();
         }
         return List.of();
