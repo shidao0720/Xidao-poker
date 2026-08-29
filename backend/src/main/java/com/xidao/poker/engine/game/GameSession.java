@@ -57,16 +57,21 @@ public final class GameSession {
     }
 
     public synchronized List<GameEvent> addPlayer(String playerId, String name) {
+        return addPlayer(playerId, name, Player.DEFAULT_AVATAR_KEY);
+    }
+
+    public synchronized List<GameEvent> addPlayer(String playerId, String name, String avatarKey) {
         if (playersById.containsKey(playerId)) throw new IllegalArgumentException("player already joined");
         if (playersById.size() >= config.maxPlayers()) throw new IllegalStateException("room is full");
         int seat = firstFreeSeat();
-        Player player = new Player(playerId, name, seat, config.buyIn());
+        Player player = new Player(playerId, name, seat, config.buyIn(), avatarKey);
         if (handInProgress()) player.becomeSpectator();
         playersById.put(playerId, player);
         boolean inHand = handInProgress() && currentHand.containsPlayer(player.id()) && player.isInHand();
         List<GameEvent> raw = new ArrayList<>();
         raw.add(GameEvent.of(GameEventType.PLAYER_JOINED, currentHandId(), playerId, Map.ofEntries(
                 Map.entry("name", name),
+                Map.entry("avatarKey", player.avatarKey()),
                 Map.entry("seat", seat),
                 Map.entry("stack", player.stack()),
                 Map.entry("streetBet", player.streetBet()),
@@ -212,7 +217,8 @@ public final class GameSession {
         playersById.remove(playerId);
         List<GameEvent> raw = new ArrayList<>();
         raw.add(GameEvent.of(GameEventType.PLAYER_LEFT, currentHandId(), playerId, Map.of(
-                "seat", player.seat()
+                "seat", player.seat(),
+                "stack", player.stack()
         )));
         if (Objects.equals(ownerId, playerId)) {
             String nextOwner = connectedPlayers().stream()
@@ -248,7 +254,8 @@ public final class GameSession {
                         handInProgress() && currentHand.containsPlayer(player.id()) && player.isInHand(),
                         handInProgress() && currentHand.containsPlayer(player.id()) && player.canAct(),
                         player.ready(),
-                        currentHand == null ? List.of() : currentHand.visibleHoleCards(viewerId, player.id())
+                        currentHand == null ? List.of() : currentHand.visibleHoleCards(viewerId, player.id()),
+                        player.avatarKey()
                 ))
                 .toList();
 

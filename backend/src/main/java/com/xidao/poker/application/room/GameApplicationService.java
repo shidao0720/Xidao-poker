@@ -56,8 +56,19 @@ public final class GameApplicationService {
             String playerName,
             String connectionId
     ) {
+        return join(roomId, commandId, playerId, playerName, "default", connectionId);
+    }
+
+    public RoomExecutionResult join(
+            String roomId,
+            String commandId,
+            String playerId,
+            String playerName,
+            String avatarKey,
+            String connectionId
+    ) {
         return executeMutation("JOIN", roomId, commandId, playerId,
-                () -> runtime(roomId).join(commandId, playerId, playerName, connectionId));
+                () -> runtime(roomId).join(commandId, playerId, playerName, avatarKey, connectionId));
     }
 
     public RoomExecutionResult setReady(
@@ -142,6 +153,10 @@ public final class GameApplicationService {
         return executeRead("TURN_TIMER_TARGET", roomId, null, () -> runtime(roomId).turnTimerTarget());
     }
 
+    public RoomSummary roomSummary(String roomId) {
+        return executeRead("ROOM_SUMMARY", roomId, null, () -> runtime(roomId).summary());
+    }
+
     public void addMutationListener(RoomMutationListener listener) {
         if (listener == null) throw new IllegalArgumentException("mutation listener is required");
         mutationListeners.add(listener);
@@ -222,7 +237,7 @@ public final class GameApplicationService {
         }
         for (RoomMutationListener listener : mutationListeners) {
             try {
-                listener.afterCommittedMutation(roomId);
+                listener.afterCommittedMutation(roomId, result);
             } catch (RuntimeException error) {
                 log.error("ROOM_MUTATION_LISTENER_FAILED roomId={} operation={} code={}",
                         roomId, operation, error.getClass().getSimpleName(), error);

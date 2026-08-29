@@ -20,6 +20,7 @@ interface ConnectOptions {
   roomId: string
   playerId: string
   playerName: string
+  avatarKey: string
 }
 
 const EVENT_TYPES = new Set([
@@ -145,7 +146,7 @@ export class PokerSocket {
 
   private open(): void {
     if (!this.options) return
-    const { roomId, playerId, playerName } = this.options
+    const { roomId, playerId, playerName, avatarKey } = this.options
     const credentials = loadCredentials(roomId, playerId)
     const params = new URLSearchParams({ roomId, playerId })
     params.set('protocolVersion', String(PROTOCOL_VERSION))
@@ -155,6 +156,7 @@ export class PokerSocket {
       params.set('resumeToken', credentials.resumeToken)
     } else {
       params.set('playerName', playerName)
+      params.set('avatarKey', avatarKey)
     }
 
     useGameStore.getState().setConnection(this.reconnectAttempt === 0 ? 'connecting' : 'reconnecting')

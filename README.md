@@ -4,7 +4,7 @@
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：局域网端到端 MVP 已可联机运行。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连、服务端回合计时、PostgreSQL 手牌历史持久化，以及 React 大厅 / 等待房间 / 牌桌界面均已落地。
+> 当前状态：局域网端到端 MVP 已可联机运行。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连、服务端回合计时、PostgreSQL 手牌历史与账户钱包，以及 React 登录 / 大厅 / 牌桌界面均已落地。
 
 ## 目标游戏流程
 
@@ -152,7 +152,19 @@ Lobby / Table / Action components
 
 单手只记录引擎已接受的玩家行动，最多 8,192 条。达到上限后牌局继续运行，数据库中的 `action_history_complete` 会标记为 `false`，避免用无上限集合换取表面上的完整性。
 
-### 3. 房间级原子锁 + 共享发送执行器
+账户、钱包和牌桌买入属于低频关键事务，启用 PostgreSQL 后同步提交，不走手牌历史异步队列。首次入座会把买入从账户钱包转入唯一的 `table_buy_in` 托管记录；重连复用该记录，不会重复扣款。只有服务端产生带最终筹码的 `PLAYER_LEFT` 后才返还余额，因此主动离开、断线超时和 All-in 后延迟离桌会汇入同一结算路径。数据库瞬时失败时结算监听器以幂等请求号重试。
+
+### 3. 双货币是单向消耗模型
+
+- 筹码用于牌桌买入、签到奖励和排行榜统计。
+- `10 筹码 = 1 英魂结晶`，兑换必须由玩家明确确认且只能单向进行。
+- 商城只能使用英魂结晶；当前商城为空，商品与库存模型后续扩展。
+- 同一真实身份可拥有多个游戏 ID，但一个游戏 ID 只能归属一个真实身份；同一真实身份同时只能占用一个有资金的牌桌席位。
+- 两种货币都只属于 play-money，不可充值、提现、换现或在玩家间转移。
+
+这个设计让牌局收益与外观消费形成长期循环，同时避免可逆兑换和玩家转账引入套利、洗分与真实资金风险。代价是兑换不可撤销，前端必须明确展示兑换比例与确认提示。
+
+### 4. 房间级原子锁 + 共享发送执行器
 
 每个 `RoomRuntime` 通过独立公平锁串行提交同一房间的命令，避免两个 WebSocket 行动同时改变一副牌。实际网络发送离开房间锁后执行，并由共享 Executor 为每个房间维持单一 drain loop，确保消息顺序。
 
@@ -160,13 +172,13 @@ Lobby / Table / Action components
 
 房间关闭与加入共用同一把生命周期锁。目录只会在成员、待移除玩家、outbox 和发送 drain 都清空后删除房间；一旦关闭标记提交，后续加入会被拒绝，从而避免“目录已删除但玩家又加入旧实例”的孤儿房间竞态。
 
-### 4. 命令级事件 + 有界回放，而不是无限 Event Log
+### 5. 命令级事件 + 有界回放，而不是无限 Event Log
 
 游戏引擎以命令式方式更新当前状态，每个命令只返回本次产生的不可变事件。`GameSession` 与 `Hand` 不保存不断增长的事件历史，避免长时间运行导致内存持续上涨。
 
 应用层默认只保留最近 512 个事件用于短暂补发，客户端序号早于缓存窗口时必须请求完整 Snapshot。命令去重缓存默认 1,024 条，发送 outbox 默认 1,024 条；达到上限时丢弃旧增量并为每位在线玩家生成当前快照。第一版不会仅靠事件回放重建全部牌局；已结束手牌的玩家、行动、底池和结算结果通过独立归档模型异步持久化。
 
-### 5. Game Session 与 Hand 生命周期分离
+### 6. Game Session 与 Hand 生命周期分离
 
 `GameSession` 表示一场持续多手牌的游戏；`Hand` 只表示其中一手。每次开始新手牌，都必须重新初始化：
 
@@ -179,7 +191,7 @@ Lobby / Table / Action components
 
 这个边界可以避免上一手的下注额、手牌或行动标记污染下一手。
 
-### 6. 玩家状态采用三个正交维度
+### 7. 玩家状态采用三个正交维度
 
 连接状态、座位状态和当前手状态分别建模，不能压缩成互斥的单一枚举：
 
@@ -204,7 +216,7 @@ WebSocket 命令、网络断线、断线宽限到期、回合超时和空房清�
 
 房间的真实成员数变为 0 后会记录空置起点，默认满 45 秒后由共享清理任务从大厅目录删除。重新加入会重置该期限；清理时仍会在房间锁内复查成员、待移除玩家、outbox 和发送任务，避免与并发加入或尚未完成的离开广播竞态。普通断线仍先执行 30 秒重连保护，等待重连的成员不算空房；启动时还会强制校验空房 TTL 必须严格长于重连宽限。期限与扫描间隔可通过 `poker.room.empty-ttl` 和 `poker.room.cleanup-interval` 配置。
 
-### 7. 行动指针采用防卡局硬约束
+### 8. 行动指针采用防卡局硬约束
 
 底层状态机始终维护以下不变量：
 
@@ -216,13 +228,13 @@ currentActor != null  →  currentActor.canAct() == true
 
 `SPECTATOR` 和 `BUSTED` 玩家只存在于 `GameSession`，不会被放入当前 `Hand` 的参与者集合。Fold、All-in、掉线等资格变化发生后，`BettingRound` 会立即重新计算行动者；任何 `TURN_CHANGED` 事件在发出前还会再次验证目标可以行动。这些约束专门防止“轮到观察者或离线玩家后无人可操作”的卡局。
 
-### 8. 手牌比较使用可排序数值键
+### 9. 手牌比较使用可排序数值键
 
 五张牌被编码为一个可直接比较大小的 `long`：高位保存牌型等级，低位保存用于平局比较的 rank/kicker。七张牌遍历 `C(7,5) = 21` 种组合，选择最大值。
 
 相比一开始就实现高度优化的查表算法，21 次五张牌评估更容易验证，且对最多 10 人的人工牌局完全足够。这里优先选择正确性和可测试性。
 
-### 9. Snapshot + Event 同步
+### 10. Snapshot + Event 同步
 
 客户端通过两种数据保持同步：
 
@@ -235,7 +247,7 @@ currentActor != null  →  currentActor.canAct() == true
 
 前端收到不连续序号时先请求 `REPLAY_EVENTS`。事件仍在 512 条窗口内时按序补齐；窗口之外或回放仍不连续时改为 `REQUEST_SNAPSHOT`。观察者、掉线和破产玩家即使留在玩家列表中，其界面也不会生成行动按钮，因为可操作性只来自当前查看者 Snapshot 的 `actionOptions`。
 
-### 10. 网络命令的幂等与防重放
+### 11. 网络命令的幂等与防重放
 
 客户端命令信封必须携带：
 
@@ -271,8 +283,16 @@ handId + turnId（行动命令）
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/api/rooms` | 获取房间列表和盲注、买入、人数状态 |
-| `POST` | `/api/rooms` | 创建房间；服务端生成 `roomId` |
-| `DELETE` | `/api/rooms/{roomId}` | 删除没有成员、outbox 或发送任务的空房间 |
+| `POST` | `/api/rooms` | 创建房间；服务端生成 `roomId`，账户模式要求登录 |
+| `DELETE` | `/api/rooms/{roomId}` | 删除没有成员、outbox 或发送任务的空房间，账户模式要求登录 |
+| `POST` | `/api/auth/register` | 创建真实身份、首个游戏 ID，或为同一身份添加游戏 ID |
+| `POST` | `/api/auth/login` | 用真实姓名、游戏 ID 和密码登录 |
+| `POST` | `/api/auth/logout` | 注销 HttpOnly 会话 Cookie |
+| `GET` | `/api/account/me` | 获取自己的游戏 ID 列表和双货币余额 |
+| `POST` | `/api/account/check-in` | 每个北京时间自然日签到一次并领取 500 筹码 |
+| `POST` | `/api/wallet/exchange` | 按 10:1 将筹码单向兑换为英魂结晶 |
+| `GET` | `/api/leaderboards` | 获取胜利手数、累计奖金和单手净收益三个 Top 3 |
+| `GET` | `/api/shop/items` | 获取商城商品；当前返回空列表 |
 
 创建房间请求示例：
 
@@ -286,7 +306,7 @@ handId + turnId（行动命令）
 }
 ```
 
-WebSocket 入口为同源 `/ws/poker`。首次加入握手包含协议与构建版本：
+WebSocket 入口为同源 `/ws/poker`。账户模式下浏览器会自动发送登录时取得的 HttpOnly Cookie，服务端以数据库身份覆盖前端提交的玩家 ID；游客模式继续使用浏览器生成的局域网身份。首次加入握手包含协议与构建版本：
 
 ```text
 <current-origin>/ws/poker?roomId=<roomId>&playerId=<playerId>&playerName=<name>&protocolVersion=1&buildVersion=0.1.0
@@ -300,7 +320,7 @@ WebSocket 入口为同源 `/ws/poker`。首次加入握手包含协议与构建�
 
 成功重连会递增 epoch、轮换 token、关闭旧 Socket，并主动推送新的查看者专属 Snapshot。token 只存在于网络适配层，不进入 Engine 或日志；旧 token、旧 epoch、旧连接发送的消息都会被拒绝。
 
-该 token 只是局域网版本的“重连持有证明”，不是完整账号认证。若未来开放到互联网，必须在它之前增加登录鉴权、TLS、速率限制和更严格的 Origin 白名单。
+`resumeToken` 只是某个牌桌连接的重连持有证明，不代替账户会话。账户模式使用另一枚只保存 SHA-256 哈希的随机会话令牌，并通过 SameSite=Strict、HttpOnly Cookie 传输；密码使用 BCrypt 保存。若未来开放到互联网，仍必须增加 TLS、速率限制、CSRF 审计和更严格的 Origin 白名单。
 
 客户端消息统一使用：
 
@@ -447,7 +467,7 @@ npm run build
 
 前端状态同步测试重点锁定 Snapshot 整体替换、事件序号缺口、服务端行动投影，以及观察者/破产玩家不进入行动队列。测试数量会随开发持续增长，以本地验证和 CI 的实际结果为准。
 
-当前本地基线：后端 135 项测试全部通过且 0 跳过，其中 2 项通过 Docker/Testcontainers 对 PostgreSQL 16 执行真实迁移、幂等和事务回滚验证；前端 32 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
+当前本地基线：后端共 138 项测试，非 Docker 环境执行的 133 项通过；另外 5 项 Testcontainers PostgreSQL 测试在 Docker Desktop 可用时执行，已覆盖真实迁移、身份约束、双货币、牌桌托管、幂等和事务回滚；前端 32 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
 
 ## Git 工作流
 
@@ -561,7 +581,7 @@ rem 修改 .env.lan 中的数据库密码
 lan-docker-start.bat
 ```
 
-`compose.lan.yml` 只映射应用端口。PostgreSQL 没有宿主机 `ports` 映射，并位于内部 Docker 网络，局域网设备不能直接访问5432端口。
+`compose.lan.yml` 只映射应用端口。PostgreSQL 没有宿主机 `ports` 映射，并位于内部 Docker 网络，局域网设备不能直接访问5432端口。Docker 方式启用账户模式，首次打开网页会进入登录/注册页；不带数据库的 `lan-start.bat` 保留游客局域网模式。
 
 直接刷新 `/rooms/{roomId}` 会由 Spring 转发到 `index.html`；`/api`、`/ws` 和 `/assets` 不参与 SPA 回退，缺失接口或资源仍返回404。
 
@@ -597,7 +617,7 @@ cd backend
 mvn spring-boot:run
 ```
 
-默认 HTTP 地址为 `http://localhost:8080/api/rooms`，WebSocket 地址为 `ws://localhost:8080/ws/poker`。历史持久化默认关闭，启动服务不要求本机安装 PostgreSQL。
+默认 HTTP 地址为 `http://localhost:8080/api/rooms`，WebSocket 地址为 `ws://localhost:8080/ws/poker`。持久化默认关闭，启动服务不要求本机安装 PostgreSQL，此时使用游客身份且不启用账户、钱包、排行榜和商城。
 
 另开终端启动前端：
 
@@ -609,7 +629,7 @@ npm run dev
 
 默认前端地址为 `http://localhost:5173`。Vite 会把同源 `/api` 和 `/ws` 代理到 `localhost:8080`，并重写 WebSocket Origin，因此本地开发无需把后端 Origin 白名单设置为 `*`。`npm run dev` 已监听 `0.0.0.0`。生产代码始终使用相对 `/api`、`/ws`，不支持通过环境变量写入 `localhost`、私人 IP 或跨源后端地址。
 
-### 启用 PostgreSQL 历史持久化
+### 启用 PostgreSQL 账户与历史持久化
 
 先创建空数据库，再通过环境变量提供连接信息。不要把真实凭据写入仓库：
 
@@ -622,7 +642,7 @@ cd backend
 mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
 
-`postgres` Profile 只负责打开 `poker.persistence.enabled` 并读取环境变量。Flyway 不在启动线程中连接数据库，而是在首次保存已结束手牌时按需迁移；迁移或写入失败由有界异步写入器重试，实时 HTTP / WebSocket 服务继续运行。
+`postgres` Profile 打开 `poker.persistence.enabled` 并读取环境变量。Flyway 不在启动线程中抢先连接数据库，而是在首次账户或历史用例访问数据库时按需迁移；手牌历史迁移或写入失败由有界异步写入器重试，实时牌局不会被历史队列阻塞。账户、钱包和买入事务需要数据库可用，失败时会明确拒绝对应操作，绝不在内存中伪造余额。
 
 首版迁移创建以下表：
 
@@ -632,6 +652,10 @@ mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 - `hand_player`：座位、私有牌、起止筹码、投入、奖金与摊牌结果
 - `game_action`：引擎接受的行动及行动后筹码状态
 - `player_statistic`：参局数、获胜手数、累计投入和累计奖金
+- `identity_account` / `account_session`：真实身份归属、BCrypt 密码哈希与仅存哈希的会话
+- `account_wallet` / `wallet_ledger`：筹码、英魂结晶与不可变余额流水
+- `daily_check_in`：按北京时间自然日去重的签到奖励
+- `table_buy_in`：入桌买入托管、最终筹码和幂等离桌结算
 
 同一手使用 `(game_id, hand_id)` 唯一键。重复异步提交返回 `ALREADY_EXISTS`，不会重复插入行动或累加玩家统计；一手牌的主记录、玩家、行动与统计在同一事务中提交。
 
@@ -644,6 +668,7 @@ Xidao-poker/
 │   └── src/
 │       ├── main/java/com/xidao/poker/
 │       │   ├── application/
+│       │   │   ├── account/
 │       │   │   ├── command/
 │       │   │   ├── history/
 │       │   │   └── room/
@@ -660,7 +685,9 @@ Xidao-poker/
 │       │   │   ├── pot/
 │       │   │   ├── snapshot/
 │       │   │   └── table/
-│       │   ├── persistence/history/
+│       │   ├── persistence/
+│       │   │   ├── account/
+│       │   │   └── history/
 │       │   └── web/
 │       │       ├── api/
 │       │       ├── protocol/
@@ -704,6 +731,9 @@ Xidao-poker/
 - [x] Spring HTTP 大厅 API
 - [x] WebSocket 协议、身份绑定与实时广播
 - [x] PostgreSQL 手牌历史、行动记录与玩家统计持久化
+- [x] 真实身份、多游戏 ID、HttpOnly 会话与 BCrypt 密码
+- [x] 双货币钱包、每日签到、三个 Top 3 与空商城
+- [x] 幂等牌桌买入托管、重连防重复扣款和离桌返还
 - [x] React 大厅、等待房间和牌桌 MVP
 - [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
 - [x] WebSocket 30 秒宽限调度与 token / epoch 安全重连

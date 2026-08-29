@@ -48,7 +48,7 @@ public final class TurnTimeoutScheduler implements RoomMutationListener {
     }
 
     @Override
-    public void afterCommittedMutation(String roomId) {
+    public void afterCommittedMutation(String roomId, com.xidao.poker.application.room.RoomExecutionResult result) {
         reconcile(roomId);
     }
 

@@ -1,28 +1,10 @@
 import type { CreateRoomInput, RoomSummary } from '../types/protocol'
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  })
-
-  if (!response.ok) {
-    const fallback = `请求失败（HTTP ${response.status}）`
-    const body = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new Error(body?.message ?? fallback)
-  }
-
-  if (response.status === 204) return undefined as T
-  return (await response.json()) as T
-}
+import { apiRequest } from './client'
 
 export const roomApi = {
-  list: () => request<RoomSummary[]>('/api/rooms'),
+  list: () => apiRequest<RoomSummary[]>('/api/rooms'),
   create: (input: CreateRoomInput) =>
-    request<RoomSummary>('/api/rooms', {
+    apiRequest<RoomSummary>('/api/rooms', {
       method: 'POST',
       body: JSON.stringify(input),
     }),

@@ -19,6 +19,15 @@ class SpaForwardControllerTest {
     }
 
     @Test
+    void portalRoutesFallBackToSpaIndex() throws Exception {
+        for (String route : new String[]{"/play", "/leaderboard", "/store", "/profile"}) {
+            mvc.perform(get(route))
+                    .andExpect(status().isOk())
+                    .andExpect(forwardedUrl("/index.html"));
+        }
+    }
+
+    @Test
     void apiAndStaticPathsAreNotCapturedBySpaFallback() throws Exception {
         mvc.perform(get("/api/rooms/missing")).andExpect(status().isNotFound());
         mvc.perform(get("/assets/missing.css")).andExpect(status().isNotFound());

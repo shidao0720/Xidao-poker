@@ -87,6 +87,7 @@ export interface PlayerSnapshot {
   canAct: boolean
   ready: boolean
   holeCards: Card[]
+  avatarKey?: string
 }
 
 export interface ActionOptions {

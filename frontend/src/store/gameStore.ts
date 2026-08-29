@@ -86,6 +86,7 @@ function revealedHandsValue(value: unknown): RevealedHandSnapshot[] | undefined 
 function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
   const id = event.playerId
   const name = stringValue(event.data.name)
+  const avatarKey = stringValue(event.data.avatarKey)
   const seat = numberValue(event.data.seat)
   const stack = numberValue(event.data.stack)
   const streetBet = numberValue(event.data.streetBet)
@@ -120,6 +121,7 @@ function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
     canAct,
     ready,
     holeCards: [],
+    ...(avatarKey ? { avatarKey } : {}),
   }
 }
 

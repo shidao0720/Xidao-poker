@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { roomApi } from '../api/rooms'
 import { LobbySignalField } from '../components/LobbySignalField'
+import { SiteHeader } from '../components/SiteHeader'
+import { useAccountStore } from '../store/accountStore'
 import type { CreateRoomInput, GamePhase, RoomSummary } from '../types/protocol'
 import { getPlayerName, savePlayerName } from '../utils/identity'
 
@@ -29,11 +31,12 @@ const initialForm: CreateRoomInput = {
 export function LobbyPage() {
   const navigate = useNavigate()
   const [rooms, setRooms] = useState<RoomSummary[]>([])
-  const [name, setName] = useState(getPlayerName())
   const [form, setForm] = useState(initialForm)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { mode, profile, bootstrap } = useAccountStore()
+  const accountMode = mode === 'authenticated' && profile !== null
 
   const loadRooms = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -48,14 +51,15 @@ export function LobbyPage() {
   }, [])
 
   useEffect(() => {
+    if (accountMode) void bootstrap()
     void loadRooms()
     const timer = window.setInterval(() => void loadRooms(true), 3_000)
     return () => window.clearInterval(timer)
-  }, [loadRooms])
+  }, [accountMode, bootstrap, loadRooms])
 
   function enterRoom(roomId: string) {
     try {
-      savePlayerName(name)
+      if (!accountMode) savePlayerName(getPlayerName())
       navigate(`/rooms/${encodeURIComponent(roomId)}`)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '请输入昵称')
@@ -65,7 +69,7 @@ export function LobbyPage() {
   async function createRoom(event: FormEvent) {
     event.preventDefault()
     try {
-      savePlayerName(name)
+      if (!accountMode) savePlayerName(getPlayerName())
       setCreating(true)
       const room = await roomApi.create(form)
       navigate(`/rooms/${encodeURIComponent(room.roomId)}`)
@@ -79,24 +83,7 @@ export function LobbyPage() {
   return (
     <main className="lobby-shell">
       <LobbySignalField />
-      <header className="lobby-header">
-        <a className="brand" href="/" aria-label="Xidao Poker 大厅">
-          <span className="brand-mark">X</span>
-          <span><strong>XIDAO</strong><small>POKER</small></span>
-        </a>
-        <label className="player-name-field">
-          <span>你的昵称</span>
-          <input
-            id="player-name"
-            name="playerName"
-            autoComplete="nickname"
-            value={name}
-            maxLength={32}
-            placeholder="输入昵称"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-      </header>
+      <SiteHeader />
 
       <section className="lobby-hero">
         <img
@@ -134,8 +121,8 @@ export function LobbyPage() {
                   <span><small>买入</small>{room.buyIn.toLocaleString()}</span>
                   <span><small>席位</small>{room.playerCount}/{room.maxPlayers}</span>
                 </div>
-                <button className="primary-button" onClick={() => enterRoom(room.roomId)} disabled={room.playerCount >= room.maxPlayers}>
-                  {room.playerCount >= room.maxPlayers ? '房间已满' : room.phase === 'WAITING' || room.phase === 'READY' ? '入座' : '进入观战'}
+                <button className="primary-button" onClick={() => enterRoom(room.roomId)} disabled={room.playerCount >= room.maxPlayers || (accountMode && room.buyIn > profile.wallet.chips)}>
+                  {room.playerCount >= room.maxPlayers ? '房间已满' : accountMode && room.buyIn > profile.wallet.chips ? '筹码不足' : room.phase === 'WAITING' || room.phase === 'READY' ? '入座' : '进入观战'}
                   <span aria-hidden="true">→</span>
                 </button>
               </article>
@@ -155,7 +142,7 @@ export function LobbyPage() {
               <label><span>初始筹码</span><input id="buy-in" name="buyIn" required min={2} type="number" value={form.buyIn} onChange={(event) => setForm({ ...form, buyIn: Number(event.target.value) })} /></label>
               <label><span>最大人数</span><select id="max-players" name="maxPlayers" value={form.maxPlayers} onChange={(event) => setForm({ ...form, maxPlayers: Number(event.target.value) })}>{Array.from({ length: 9 }, (_, index) => index + 2).map((value) => <option value={value} key={value}>{value} 人</option>)}</select></label>
             </div>
-            <button className="primary-button create-button" disabled={creating}>{creating ? '正在创建…' : '创建并入座'}<span>＋</span></button>
+            <button className="primary-button create-button" disabled={creating || (accountMode && form.buyIn > profile.wallet.chips)}>{creating ? '正在创建…' : accountMode && form.buyIn > profile.wallet.chips ? '筹码不足' : '创建并入座'}<span>＋</span></button>
           </form>
         </aside>
       </div>

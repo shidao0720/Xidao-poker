@@ -60,9 +60,11 @@ public final class WebSocketConnectionRegistry {
                         request.roomId(),
                         request.playerId(),
                         previous.playerName(),
+                        previous.avatarKey(),
                         session.getId(),
                         Math.incrementExact(previous.epoch()),
-                        nextToken()
+                        nextToken(),
+                        request.accountId()
                 );
             } else {
                 if (previous != null) {
@@ -75,9 +77,11 @@ public final class WebSocketConnectionRegistry {
                         request.roomId(),
                         request.playerId(),
                         request.playerName(),
+                        request.avatarKey(),
                         session.getId(),
                         1,
-                        nextToken()
+                        nextToken(),
+                        request.accountId()
                 );
             }
 
@@ -321,14 +325,16 @@ public final class WebSocketConnectionRegistry {
 
     record MemberTicket(
             String playerName,
+            String avatarKey,
             String connectionId,
             long epoch,
             String resumeToken
     ) {
         static MemberTicket from(SocketIdentity identity) {
             return new MemberTicket(
-                    identity.playerName(),
-                    identity.connectionId(),
+                identity.playerName(),
+                identity.avatarKey(),
+                identity.connectionId(),
                     identity.connectionEpoch(),
                     identity.resumeToken()
             );

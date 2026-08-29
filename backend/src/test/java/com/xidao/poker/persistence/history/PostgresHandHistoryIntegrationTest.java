@@ -1,6 +1,15 @@
 package com.xidao.poker.persistence.history;
 
 import com.xidao.poker.application.history.CompletedHandArchive;
+import com.xidao.poker.application.account.AccountErrorCode;
+import com.xidao.poker.application.account.AccountException;
+import com.xidao.poker.application.account.AccountService;
+import com.xidao.poker.application.account.AuthResult;
+import com.xidao.poker.application.account.CheckInResult;
+import com.xidao.poker.application.account.WalletSnapshot;
+import com.xidao.poker.application.account.TableEconomyService;
+import com.xidao.poker.application.account.TableBuyInReservation;
+import com.xidao.poker.web.lifecycle.TableSettlementListener;
 import com.xidao.poker.application.history.HandHistoryRepository;
 import com.xidao.poker.application.history.HandHistorySaveResult;
 import com.xidao.poker.engine.history.CompletedHandAction;
@@ -43,6 +52,15 @@ class PostgresHandHistoryIntegrationTest {
 
     @Autowired
     private DataSource dataSource;
+
+    @Autowired
+    private AccountService accounts;
+
+    @Autowired
+    private TableEconomyService tableEconomy;
+
+    @Autowired
+    private TableSettlementListener tableSettlementListener;
 
     @Test
     void migrationTransactionAndIdempotencyWorkAgainstPostgres() {
@@ -109,5 +127,93 @@ class PostgresHandHistoryIntegrationTest {
                 invalid.gameId(),
                 invalid.handId()
         )).isZero();
+    }
+
+    @Test
+    void identityAliasesCheckInAndOneWayExchangeAreTransactionalAndIdempotent() {
+        AuthResult first = accounts.register("测试甲", "fate_mstr_a", "correct-horse-1");
+        AuthResult alias = accounts.register("测试甲", "fate_mstr_b", "correct-horse-1");
+
+        assertThat(first.sessionToken()).hasSizeGreaterThanOrEqualTo(40);
+        assertThat(alias.profile().gameIds()).containsExactly("fate_mstr_a", "fate_mstr_b");
+        assertThat(alias.profile().wallet()).isEqualTo(new WalletSnapshot(10_000, 0));
+
+        CheckInResult checkIn = accounts.checkIn(first.sessionToken(), "checkin-request-001");
+        CheckInResult duplicateDay = accounts.checkIn(first.sessionToken(), "checkin-request-002");
+        assertThat(checkIn.awarded()).isTrue();
+        assertThat(checkIn.wallet()).isEqualTo(new WalletSnapshot(10_500, 0));
+        assertThat(duplicateDay.awarded()).isFalse();
+        assertThat(duplicateDay.wallet()).isEqualTo(new WalletSnapshot(10_500, 0));
+
+        WalletSnapshot exchanged = accounts.exchangeForCrystals(
+                first.sessionToken(), "exchange-request-001", 100);
+        WalletSnapshot duplicateExchange = accounts.exchangeForCrystals(
+                first.sessionToken(), "exchange-request-001", 100);
+        assertThat(exchanged).isEqualTo(new WalletSnapshot(10_400, 10));
+        assertThat(duplicateExchange).isEqualTo(exchanged);
+
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        String passwordHash = jdbc.queryForObject(
+                "SELECT password_hash FROM identity_account WHERE real_name_key = ?",
+                String.class, "测试甲");
+        assertThat(passwordHash).startsWith("$2").doesNotContain("correct-horse-1");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM wallet_ledger WHERE account_id = "
+                + "(SELECT account_id FROM poker_user WHERE player_id = 'fate_mstr_a')", Long.class))
+                .isEqualTo(4L);
+    }
+
+    @Test
+    void gameIdCannotMoveBetweenRealIdentitiesAndFailedExchangeDoesNotMutateWallet() {
+        AuthResult account = accounts.register("测试乙", "unique_saber", "correct-horse-2");
+
+        assertThatThrownBy(() -> accounts.register("测试丙", "unique_saber", "correct-horse-3"))
+                .isInstanceOfSatisfying(AccountException.class,
+                        error -> assertThat(error.code()).isEqualTo(AccountErrorCode.GAME_ID_TAKEN));
+        assertThatThrownBy(() -> accounts.exchangeForCrystals(
+                account.sessionToken(), "exchange-too-large", 20_000))
+                .isInstanceOfSatisfying(AccountException.class,
+                        error -> assertThat(error.code()).isEqualTo(AccountErrorCode.INSUFFICIENT_CHIPS));
+        assertThat(accounts.profile(account.sessionToken()).wallet())
+                .isEqualTo(new WalletSnapshot(10_000, 0));
+    }
+
+    @Test
+    void tableBuyInIsReservedOnceAndFinalStackIsReturnedOnce() {
+        assertThat(tableSettlementListener).isNotNull();
+        AuthResult account = accounts.register("测试丁", "escrow_rin", "correct-horse-4");
+        var principal = accounts.authenticate(account.sessionToken());
+
+        TableBuyInReservation first = tableEconomy.reserveBuyIn(
+                principal.accountId(), principal.gameId(), "room-escrow-1", 1_000, "buyin-request-001");
+        TableBuyInReservation reconnect = tableEconomy.reserveBuyIn(
+                principal.accountId(), principal.gameId(), "room-escrow-1", 1_000, "buyin-request-002");
+
+        assertThat(first.newlyReserved()).isTrue();
+        assertThat(first.wallet()).isEqualTo(new WalletSnapshot(9_000, 0));
+        assertThat(reconnect.newlyReserved()).isFalse();
+        assertThat(reconnect.wallet()).isEqualTo(first.wallet());
+        assertThatThrownBy(() -> tableEconomy.reserveBuyIn(
+                principal.accountId(), principal.gameId(), "room-escrow-2", 1_000, "buyin-request-003"))
+                .isInstanceOfSatisfying(AccountException.class,
+                        error -> assertThat(error.code()).isEqualTo(AccountErrorCode.ALREADY_AT_TABLE));
+
+        WalletSnapshot settled = tableEconomy.settleSeat(
+                "room-escrow-1", principal.gameId(), 1_275, "cashout-request-001");
+        WalletSnapshot duplicate = tableEconomy.settleSeat(
+                "room-escrow-1", principal.gameId(), 1_275, "cashout-request-001");
+
+        assertThat(settled).isEqualTo(new WalletSnapshot(10_275, 0));
+        assertThat(duplicate).isEqualTo(settled);
+        TableBuyInReservation rejoined = tableEconomy.reserveBuyIn(
+                principal.accountId(), principal.gameId(), "room-escrow-1", 500, "buyin-request-004");
+        assertThat(rejoined.newlyReserved()).isTrue();
+        assertThat(rejoined.wallet()).isEqualTo(new WalletSnapshot(9_775, 0));
+        assertThat(tableEconomy.settleSeat(
+                "room-escrow-1", principal.gameId(), 450, "cashout-request-002"))
+                .isEqualTo(new WalletSnapshot(10_225, 0));
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM table_buy_in WHERE room_id = 'room-escrow-1' AND status = 'SETTLED'",
+                Long.class)).isEqualTo(2L);
     }
 }

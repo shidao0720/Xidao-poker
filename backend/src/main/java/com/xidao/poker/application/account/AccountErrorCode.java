@@ -1,0 +1,10 @@
+package com.xidao.poker.application.account;
+
+public enum AccountErrorCode {
+    INVALID_CREDENTIALS,
+    GAME_ID_TAKEN,
+    INSUFFICIENT_CHIPS,
+    ALREADY_AT_TABLE,
+    INVALID_EXCHANGE,
+    UNAUTHORIZED
+}

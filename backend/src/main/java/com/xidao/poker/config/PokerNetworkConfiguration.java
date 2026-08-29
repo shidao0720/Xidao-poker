@@ -2,6 +2,7 @@ package com.xidao.poker.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xidao.poker.application.room.GameApplicationService;
+import com.xidao.poker.application.account.TableEconomyService;
 import com.xidao.poker.application.history.HandHistoryPublisher;
 import com.xidao.poker.application.room.RoomDeliverySink;
 import com.xidao.poker.application.room.RoomEventDispatcher;
@@ -11,6 +12,7 @@ import com.xidao.poker.web.ws.PokerWebSocketHandler;
 import com.xidao.poker.web.ws.WebSocketConnectionRegistry;
 import com.xidao.poker.web.ws.WebSocketRoomDeliverySink;
 import com.xidao.poker.web.lifecycle.TurnTimeoutScheduler;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -118,9 +120,11 @@ public class PokerNetworkConfiguration {
             GameApplicationService games,
             WebSocketConnectionRegistry connections,
             DisconnectGraceScheduler disconnects,
+            ObjectProvider<TableEconomyService> economyProvider,
             ObjectMapper objectMapper,
             PokerNetworkProperties properties
     ) {
-        return new PokerWebSocketHandler(games, connections, disconnects, objectMapper, properties);
+        return new PokerWebSocketHandler(
+                games, connections, disconnects, economyProvider.getIfAvailable(), objectMapper, properties);
     }
 }

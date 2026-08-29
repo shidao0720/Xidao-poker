@@ -25,3 +25,10 @@ export function savePlayerName(name: string): string {
   localStorage.setItem(PLAYER_NAME_KEY, normalized)
   return normalized
 }
+
+export function applyAccountIdentity(gameId: string): void {
+  const normalized = gameId.trim()
+  if (normalized.length < 1 || normalized.length > 12) throw new Error('游戏 ID 无效')
+  localStorage.setItem(PLAYER_ID_KEY, normalized)
+  localStorage.setItem(PLAYER_NAME_KEY, normalized.slice(0, 32))
+}

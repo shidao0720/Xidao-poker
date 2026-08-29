@@ -8,6 +8,8 @@ import com.xidao.poker.persistence.history.HandHistoryMapper;
 import com.xidao.poker.persistence.history.FlywayHistorySchemaInitializer;
 import com.xidao.poker.persistence.history.HistorySchemaInitializer;
 import com.xidao.poker.persistence.history.PostgresHandHistoryRepository;
+import com.xidao.poker.persistence.account.AccountMapper;
+import com.xidao.poker.persistence.account.PostgresAccountService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -21,13 +23,22 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.TaskScheduler;
+import com.xidao.poker.application.room.GameApplicationService;
+import com.xidao.poker.web.lifecycle.TableSettlementListener;
 
 import javax.sql.DataSource;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.ZoneId;
 
 @Configuration
 @EnableTransactionManagement
 @AutoConfigureAfter(MybatisPlusAutoConfiguration.class)
-@MapperScan(basePackageClasses = HandHistoryMapper.class, annotationClass = Mapper.class)
+@MapperScan(basePackages = "com.xidao.poker.persistence", annotationClass = Mapper.class)
 @ConditionalOnProperty(prefix = "poker.persistence", name = "enabled", havingValue = "true")
 public class PokerPostgresHistoryConfiguration {
     @Bean(destroyMethod = "close")
@@ -88,5 +99,36 @@ public class PokerPostgresHistoryConfiguration {
                 properties.initialRetryBackoff(),
                 properties.shutdownWait()
         );
+    }
+
+    @Bean
+    public PasswordEncoder accountPasswordEncoder() {
+        return new BCryptPasswordEncoder(12);
+    }
+
+    @Bean
+    public PostgresAccountService accountService(
+            AccountMapper mapper,
+            HistorySchemaInitializer schemaInitializer,
+            PasswordEncoder accountPasswordEncoder
+    ) {
+        return new PostgresAccountService(
+                mapper,
+                schemaInitializer,
+                accountPasswordEncoder,
+                new SecureRandom(),
+                Clock.systemUTC(),
+                ZoneId.of("Asia/Shanghai")
+        );
+    }
+
+    @Bean
+    public TableSettlementListener tableSettlementListener(
+            PostgresAccountService economy,
+            @Qualifier("disconnectTaskScheduler") TaskScheduler taskScheduler,
+            GameApplicationService games,
+            Clock pokerClock
+    ) {
+        return new TableSettlementListener(economy, taskScheduler, games, pokerClock);
     }
 }

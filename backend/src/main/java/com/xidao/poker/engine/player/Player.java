@@ -11,8 +11,10 @@ import java.util.Objects;
  * 游戏引擎中的玩家状态。实时筹码和下注状态只保存在服务端内存中。
  */
 public final class Player {
+    public static final String DEFAULT_AVATAR_KEY = "default";
     private final String id;
     private final String name;
+    private final String avatarKey;
     private final int seat;
     private final List<Card> holeCards = new ArrayList<>(2);
     private int stack;
@@ -25,12 +27,17 @@ public final class Player {
     private HandStatus handStatus;
 
     public Player(String id, String name, int seat, int stack) {
+        this(id, name, seat, stack, DEFAULT_AVATAR_KEY);
+    }
+
+    public Player(String id, String name, int seat, int stack, String avatarKey) {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("player id is required");
         if (name == null || name.isBlank()) throw new IllegalArgumentException("player name is required");
         if (seat < 0 || seat > 9) throw new IllegalArgumentException("seat must be between 0 and 9");
         if (stack < 0) throw new IllegalArgumentException("stack cannot be negative");
         this.id = id;
         this.name = name;
+        this.avatarKey = avatarKey == null || avatarKey.isBlank() ? DEFAULT_AVATAR_KEY : avatarKey;
         this.seat = seat;
         this.stack = stack;
         this.connectionStatus = ConnectionStatus.CONNECTED;
@@ -87,6 +94,7 @@ public final class Player {
 
     public String id() { return id; }
     public String name() { return name; }
+    public String avatarKey() { return avatarKey; }
     public int seat() { return seat; }
     public int stack() { return stack; }
     public int streetBet() { return streetBet; }

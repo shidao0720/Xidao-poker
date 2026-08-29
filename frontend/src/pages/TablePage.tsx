@@ -13,6 +13,7 @@ import {
   settlementTransferDuration,
 } from '../components/TableEffects'
 import { useGameStore } from '../store/gameStore'
+import { useAccountStore } from '../store/accountStore'
 import type { ActionType, GamePhase, GameSnapshot, PlayerStatus } from '../types/protocol'
 import { getPlayerId, getPlayerName } from '../utils/identity'
 import { positionPlayersForViewer } from '../utils/seatLayout'
@@ -43,8 +44,12 @@ export function TablePage() {
   const { roomId } = useParams()
   const navigate = useNavigate()
   const socketRef = useRef<PokerSocket | null>(null)
-  const playerId = useMemo(getPlayerId, [])
-  const playerName = useMemo(getPlayerName, [])
+  const accountProfile = useAccountStore((state) => state.profile)
+  const guestPlayerId = useMemo(getPlayerId, [])
+  const guestPlayerName = useMemo(getPlayerName, [])
+  const playerId = accountProfile?.gameId ?? guestPlayerId
+  const playerName = accountProfile?.gameId ?? guestPlayerName
+  const playerAvatarKey = accountProfile?.avatarKey ?? 'default'
   const { snapshot, connection, lastError, notice, setError, setNotice, reset } = useGameStore()
   const [allInVisible, setAllInVisible] = useState(false)
   const [dismissedSettlementHand, setDismissedSettlementHand] = useState<number | null>(null)
@@ -67,7 +72,7 @@ export function TablePage() {
     socketRef.current = socket
     // 延迟一个任务周期，避免 React StrictMode 的开发期 setup/cleanup 探测创建幽灵连接。
     const connectTimer = window.setTimeout(() => {
-      socket.connect({ roomId, playerId, playerName })
+      socket.connect({ roomId, playerId, playerName, avatarKey: playerAvatarKey })
     }, 0)
     return () => {
       window.clearTimeout(connectTimer)
@@ -75,7 +80,7 @@ export function TablePage() {
       socketRef.current = null
       reset()
     }
-  }, [navigate, playerId, playerName, reset, roomId])
+  }, [navigate, playerAvatarKey, playerId, playerName, reset, roomId])
 
   const self = snapshot?.players.find((player) => player.id === playerId)
   const canReady = self && self.status !== 'DISCONNECTED' && self.status !== 'BUSTED'

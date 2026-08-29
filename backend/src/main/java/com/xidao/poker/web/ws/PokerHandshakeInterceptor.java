@@ -1,5 +1,15 @@
 package com.xidao.poker.web.ws;
 
+import com.xidao.poker.application.account.AccountPrincipal;
+import com.xidao.poker.application.account.AccountService;
+import com.xidao.poker.application.account.AccountException;
+import com.xidao.poker.application.account.AccountErrorCode;
+import com.xidao.poker.application.account.AvatarCatalog;
+import com.xidao.poker.config.PokerPersistenceProperties;
+import com.xidao.poker.web.api.SessionCookie;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -18,6 +28,26 @@ import java.util.regex.Pattern;
 public class PokerHandshakeInterceptor implements HandshakeInterceptor {
     static final String HANDSHAKE_ATTRIBUTE = PokerHandshakeRequest.class.getName();
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
+    private final AccountService accounts;
+    private final boolean authenticationRequired;
+
+    /** Unit-test and guest-LAN constructor. */
+    public PokerHandshakeInterceptor() {
+        this.accounts = null;
+        this.authenticationRequired = false;
+    }
+
+    @Autowired
+    public PokerHandshakeInterceptor(
+            ObjectProvider<AccountService> accountProvider,
+            PokerPersistenceProperties persistence
+    ) {
+        this.accounts = accountProvider.getIfAvailable();
+        this.authenticationRequired = persistence.enabled();
+        if (authenticationRequired && accounts == null) {
+            throw new IllegalStateException("account service is required when persistence is enabled");
+        }
+    }
 
     @Override
     public boolean beforeHandshake(
@@ -32,12 +62,28 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
                     .build()
                     .getQueryParams();
             String roomId = requiredSafeId(query, "roomId");
-            String playerId = requiredSafeId(query, "playerId");
+            String requestedPlayerId = optionalTrimmed(query, "playerId");
+            String playerId;
             String playerName = optionalTrimmed(query, "playerName");
+            String avatarKey = AvatarCatalog.normalize(optionalTrimmed(query, "avatarKey"));
             String epochText = optionalTrimmed(query, "connectionEpoch");
             String resumeToken = optionalTrimmed(query, "resumeToken");
             int protocolVersion = requiredPositiveInteger(query, "protocolVersion");
             String buildVersion = requiredBuildVersion(query);
+            AccountPrincipal principal = null;
+
+            if (authenticationRequired) {
+                String sessionToken = requiredSessionCookie(request);
+                principal = accounts.authenticate(sessionToken);
+                avatarKey = accounts.profile(sessionToken).avatarKey();
+                playerId = principal.gameId();
+                playerName = principal.gameId();
+            } else {
+                if (requestedPlayerId == null || !SAFE_ID.matcher(requestedPlayerId).matches()) {
+                    throw new IllegalArgumentException("playerId is invalid");
+                }
+                playerId = requestedPlayerId;
+            }
 
             Long epoch = epochText == null ? null : parsePositiveEpoch(epochText);
             boolean hasToken = resumeToken != null;
@@ -57,17 +103,36 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
                             roomId,
                             playerId,
                             playerName,
+                            avatarKey,
                             epoch,
                             resumeToken,
                             protocolVersion,
-                            buildVersion
+                            buildVersion,
+                            principal == null ? null : principal.accountId()
                     )
             );
             return true;
+        } catch (AccountException error) {
+            response.setStatusCode(HttpStatus.UNAUTHORIZED);
+            return false;
         } catch (IllegalArgumentException error) {
             response.setStatusCode(HttpStatus.BAD_REQUEST);
             return false;
         }
+    }
+
+    private String requiredSessionCookie(ServerHttpRequest request) {
+        for (String header : request.getHeaders().getOrEmpty(HttpHeaders.COOKIE)) {
+            for (String part : header.split(";")) {
+                int separator = part.indexOf('=');
+                if (separator <= 0) continue;
+                if (SessionCookie.NAME.equals(part.substring(0, separator).trim())) {
+                    String value = part.substring(separator + 1).trim();
+                    if (!value.isBlank()) return value;
+                }
+            }
+        }
+        throw new AccountException(AccountErrorCode.UNAUTHORIZED, "authenticated session is required");
     }
 
     @Override

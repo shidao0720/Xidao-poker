@@ -1,6 +1,7 @@
 import { useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import type { PlayerSnapshot } from '../types/protocol'
 import { CardView } from './CardView'
+import { AvatarView } from './AvatarView'
 
 const statusLabels: Record<PlayerSnapshot['status'], string> = {
   ACTIVE: '在局中',
@@ -92,7 +93,7 @@ export function PlayerSeat({
         ) : null}
       </div>
       <div className="seat-panel">
-        <div className="avatar" aria-hidden="true">{player.name.slice(0, 1).toUpperCase()}</div>
+        <AvatarView className="avatar" avatarKey={player.avatarKey} name={player.name} />
         <div className="seat-copy">
           <div className="seat-name">
             <span>{player.name}</span>

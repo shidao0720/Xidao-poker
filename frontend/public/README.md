@@ -15,7 +15,7 @@ assets/
 ├── images/
 │   ├── cards/        手牌、牌背和牌面图
 │   ├── backgrounds/  大厅、牌桌等背景图
-│   ├── avatars/      默认头像和头像框
+│   ├── avatars/      默认头像和头像框（头像 key 由账户资料保存）
 │   └── ui/           筹码、按钮纹理等界面素材
 ├── audio/
 │   ├── music/        循环播放的背景音乐
@@ -38,3 +38,4 @@ assets/
 | --- | --- | --- | --- |
 | `assets/images/ui/fate-stay-poker-logo.png` | B 主题标题 Logo | shidao0720 提供 | 项目自有素材 |
 | `assets/images/ui/fate-stay-poker-logo-source.png` | Logo 原始黑底源文件 | shidao0720 提供 | 项目自有素材 |
+| `assets/images/avatars/*` | 账户和牌桌预置头像（SVG/JPG） | Xidao Poker | 项目自有素材 |

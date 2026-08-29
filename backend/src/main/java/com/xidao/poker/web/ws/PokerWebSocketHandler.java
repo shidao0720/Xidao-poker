@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xidao.poker.application.command.PlayerActionCommand;
+import com.xidao.poker.application.account.TableBuyInReservation;
+import com.xidao.poker.application.account.TableEconomyService;
 import com.xidao.poker.application.command.StartGameCommand;
 import com.xidao.poker.application.room.EventReplay;
 import com.xidao.poker.application.room.GameApplicationService;
@@ -40,8 +42,25 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
     private final GameApplicationService games;
     private final WebSocketConnectionRegistry connections;
     private final DisconnectGraceScheduler disconnects;
+    private final TableEconomyService economy;
     private final ObjectMapper objectMapper;
     private final int maximumTextMessageBytes;
+
+    public PokerWebSocketHandler(
+            GameApplicationService games,
+            WebSocketConnectionRegistry connections,
+            DisconnectGraceScheduler disconnects,
+            TableEconomyService economy,
+            ObjectMapper objectMapper,
+            PokerNetworkProperties properties
+    ) {
+        this.games = games;
+        this.connections = connections;
+        this.disconnects = disconnects;
+        this.economy = economy;
+        this.objectMapper = objectMapper;
+        this.maximumTextMessageBytes = properties.maximumTextMessageBytes();
+    }
 
     public PokerWebSocketHandler(
             GameApplicationService games,
@@ -50,11 +69,7 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
             ObjectMapper objectMapper,
             PokerNetworkProperties properties
     ) {
-        this.games = games;
-        this.connections = connections;
-        this.disconnects = disconnects;
-        this.objectMapper = objectMapper;
-        this.maximumTextMessageBytes = properties.maximumTextMessageBytes();
+        this(games, connections, disconnects, null, objectMapper, properties);
     }
 
     @Override
@@ -95,6 +110,7 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
         }
 
         SocketIdentity identity = prepared.identity();
+        TableBuyInReservation reservation = null;
         try {
             if (request.reconnecting()) {
                 games.reconnect(
@@ -105,11 +121,19 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
                         identity.connectionId()
                 );
             } else {
+                if (economy != null && identity.accountId() != null) {
+                    long buyIn = games.roomSummary(identity.roomId()).buyIn();
+                    reservation = economy.reserveBuyIn(
+                            identity.accountId(), identity.playerId(), identity.roomId(), buyIn,
+                            buyInRequestId(identity.connectionId())
+                    );
+                }
                 games.join(
                         identity.roomId(),
                         "ws-join-" + identity.connectionId(),
                         identity.playerId(),
                         identity.playerName(),
+                        identity.avatarKey(),
                         identity.connectionId()
                 );
             }
@@ -117,6 +141,7 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
             try {
                 sendBoundError(identity, null, error);
             } finally {
+                compensateFailedJoin(identity, reservation);
                 connections.rollback(prepared);
             }
             return;
@@ -140,6 +165,31 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
                     identity.connectionEpoch(), error);
             closeQuietly(session, CloseStatus.SERVER_ERROR);
         }
+    }
+
+    private void compensateFailedJoin(SocketIdentity identity, TableBuyInReservation reservation) {
+        if (economy == null || reservation == null || !reservation.newlyReserved()) return;
+        try {
+            economy.settleSeat(identity.roomId(), identity.playerId(), reservation.buyIn(),
+                    refundRequestId(identity.connectionId()));
+        } catch (RuntimeException settlementError) {
+            log.error("TABLE_BUY_IN_COMPENSATION_FAILED roomId={} playerId={} code={}",
+                    identity.roomId(), identity.playerId(), settlementError.getClass().getSimpleName());
+        }
+    }
+
+    private String buyInRequestId(String connectionId) {
+        return compactRequestId("buyin", connectionId);
+    }
+
+    private String refundRequestId(String connectionId) {
+        return compactRequestId("refund", connectionId);
+    }
+
+    private String compactRequestId(String prefix, String value) {
+        String clean = value == null ? "unknown" : value.replaceAll("[^A-Za-z0-9_-]", "_");
+        if (clean.length() > 48) clean = clean.substring(0, 48);
+        return prefix + "-" + clean;
     }
 
     @Override
