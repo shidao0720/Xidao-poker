@@ -50,6 +50,12 @@ function booleanValue(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
 }
 
+function cosmeticsValue(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  return Object.fromEntries(entries)
+}
+
 function updatePlayer(
   players: PlayerSnapshot[],
   playerId: string | null,
@@ -87,6 +93,7 @@ function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
   const id = event.playerId
   const name = stringValue(event.data.name)
   const avatarKey = stringValue(event.data.avatarKey)
+  const cosmetics = cosmeticsValue(event.data.cosmetics)
   const seat = numberValue(event.data.seat)
   const stack = numberValue(event.data.stack)
   const streetBet = numberValue(event.data.streetBet)
@@ -122,6 +129,7 @@ function joinedPlayer(event: GameEvent): PlayerSnapshot | null {
     ready,
     holeCards: [],
     ...(avatarKey ? { avatarKey } : {}),
+    ...(cosmetics ? { cosmetics } : {}),
   }
 }
 

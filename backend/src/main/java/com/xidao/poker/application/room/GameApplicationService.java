@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import java.util.function.Supplier;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -67,8 +68,20 @@ public final class GameApplicationService {
             String avatarKey,
             String connectionId
     ) {
+        return join(roomId, commandId, playerId, playerName, avatarKey, Map.of(), connectionId);
+    }
+
+    public RoomExecutionResult join(
+            String roomId,
+            String commandId,
+            String playerId,
+            String playerName,
+            String avatarKey,
+            Map<String, String> cosmetics,
+            String connectionId
+    ) {
         return executeMutation("JOIN", roomId, commandId, playerId,
-                () -> runtime(roomId).join(commandId, playerId, playerName, avatarKey, connectionId));
+                () -> runtime(roomId).join(commandId, playerId, playerName, avatarKey, cosmetics, connectionId));
     }
 
     public RoomExecutionResult setReady(

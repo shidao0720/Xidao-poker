@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,6 +22,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class GameSessionTest {
     private static final GameConfig CONFIG = new GameConfig(10, 20, 1_000, 10);
+
+    @Test
+    void snapshotAndJoinEventCarryServerSelectedCosmetics() {
+        GameSession session = new GameSession("cosmetic-room", CONFIG, 1L);
+        Map<String, String> cosmetics = Map.of(
+                "avatarFrame", "observer-frame",
+                "cardBack", "red-lance",
+                "buttonEffect", "spirit-pulse"
+        );
+
+        List<GameEvent> events = session.addPlayer("A", "Alice", "azure", cosmetics);
+
+        assertThat(events).singleElement().satisfies(event ->
+                assertThat(event.data().get("cosmetics")).isEqualTo(cosmetics));
+        assertThat(session.snapshot("A").players()).singleElement().satisfies(player ->
+                assertThat(player.cosmetics()).containsAllEntriesOf(cosmetics));
+    }
 
     @Test
     void requiresEveryoneToBeReadyAndStartsFirstHand() {

@@ -17,6 +17,7 @@ import { useAccountStore } from '../store/accountStore'
 import type { ActionType, GamePhase, GameSnapshot, PlayerStatus } from '../types/protocol'
 import { getPlayerId, getPlayerName } from '../utils/identity'
 import { positionPlayersForViewer } from '../utils/seatLayout'
+import { rememberPendingTableResult, saveTableResult } from '../utils/tableExit'
 import { PokerSocket } from '../ws/PokerSocket'
 
 const phaseLabels: Record<GamePhase, string> = {
@@ -58,6 +59,7 @@ export function TablePage() {
   const previousHandId = useRef<number | undefined>(undefined)
   const settlementFrame = useRef<number | null>(null)
   const settlementStartedHand = useRef<number | null>(null)
+  const initialStack = useRef<number | null>(null)
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 })
@@ -83,6 +85,7 @@ export function TablePage() {
   }, [navigate, playerAvatarKey, playerId, playerName, reset, roomId])
 
   const self = snapshot?.players.find((player) => player.id === playerId)
+  if (self && initialStack.current === null) initialStack.current = self.stack
   const canReady = self && self.status !== 'DISCONNECTED' && self.status !== 'BUSTED'
   const isOwner = snapshot?.ownerId === playerId
   const eligiblePlayers = snapshot?.players.filter((player) => player.status !== 'DISCONNECTED' && player.stack > 0) ?? []
@@ -170,8 +173,17 @@ export function TablePage() {
   }, [settlementVisible, snapshot, startSettlementTransfer])
 
   function leaveRoom() {
+    if (accountProfile && roomId && self) {
+      rememberPendingTableResult(roomId)
+    } else if (self && initialStack.current !== null) {
+      saveTableResult({
+        netChips: self.stack - initialStack.current,
+        buyIn: initialStack.current,
+        returnedChips: self.stack,
+      })
+    }
     socketRef.current?.leave()
-    navigate('/')
+    navigate('/play')
   }
 
   function act(action: ActionType, amount = 0) {
@@ -272,11 +284,12 @@ export function TablePage() {
             </section>
           )}
 
-          <ActionBar snapshot={snapshot} playerId={playerId} onAction={act} />
+          <ActionBar snapshot={snapshot} playerId={playerId} onAction={act} effectKey={self?.cosmetics?.buttonEffect} />
           <AllInBroadcast
             visible={allInVisible}
             amount={self?.totalContribution ?? 0}
             onDismiss={() => setAllInVisible(false)}
+            effectKey={self?.cosmetics?.buttonEffect}
           />
           <SettlementOverlay
             snapshot={snapshot}

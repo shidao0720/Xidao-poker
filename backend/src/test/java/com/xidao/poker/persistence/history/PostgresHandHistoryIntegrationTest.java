@@ -9,6 +9,10 @@ import com.xidao.poker.application.account.CheckInResult;
 import com.xidao.poker.application.account.WalletSnapshot;
 import com.xidao.poker.application.account.TableEconomyService;
 import com.xidao.poker.application.account.TableBuyInReservation;
+import com.xidao.poker.application.account.RedemptionResult;
+import com.xidao.poker.application.account.TableSessionResult;
+import com.xidao.poker.application.account.BroadcastMailCommand;
+import com.xidao.poker.application.account.CosmeticSlot;
 import com.xidao.poker.web.lifecycle.TableSettlementListener;
 import com.xidao.poker.application.history.HandHistoryRepository;
 import com.xidao.poker.application.history.HandHistorySaveResult;
@@ -178,6 +182,77 @@ class PostgresHandHistoryIntegrationTest {
     }
 
     @Test
+    void administratorMailRewardsAndRedemptionCodeAreTransactionalAndIdempotent() {
+        AuthResult account = accounts.register("测试邮件", "mail_master", "correct-horse-5");
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        jdbc.update("UPDATE identity_account SET is_admin = TRUE WHERE account_id = "
+                + "(SELECT account_id FROM poker_user WHERE player_id = 'mail_master')");
+
+        var sent = accounts.broadcastMail(account.sessionToken(), "broadcast-request-001",
+                new BroadcastMailCommand("REWARD", "维护奖励", "感谢参与本次测试。",
+                        500, 25, "saber-blue"));
+        var inbox = accounts.inbox(account.sessionToken());
+        assertThat(inbox.unreadCount()).isPositive();
+        assertThat(inbox.messages()).extracting("mailId").contains(sent.mailId());
+        var claimed = accounts.claimMail(
+                account.sessionToken(), sent.mailId(), "mailclaim-request-001");
+        var duplicateClaim = accounts.claimMail(
+                account.sessionToken(), sent.mailId(), "mailclaim-request-001");
+        assertThat(claimed.wallet()).isEqualTo(new WalletSnapshot(10_500, 25));
+        assertThat(duplicateClaim.wallet()).isEqualTo(claimed.wallet());
+        assertThat(claimed.cosmetics()).contains("saber-blue");
+
+        RedemptionResult redeemed = accounts.redeemCode(
+                account.sessionToken(), "redeem-request-001", "fate-stay-poker");
+        RedemptionResult repeatedRequest = accounts.redeemCode(
+                account.sessionToken(), "redeem-request-001", "FATE-STAY-POKER");
+        assertThat(redeemed.currency()).isEqualTo("CRYSTAL");
+        assertThat(redeemed.amount()).isEqualTo(100);
+        assertThat(redeemed.wallet()).isEqualTo(new WalletSnapshot(10_500, 125));
+        assertThat(repeatedRequest).isEqualTo(redeemed);
+        assertThatThrownBy(() -> accounts.redeemCode(
+                account.sessionToken(), "redeem-request-002", "FATE-STAY-POKER"))
+                .isInstanceOfSatisfying(AccountException.class,
+                        error -> assertThat(error.code())
+                                .isEqualTo(AccountErrorCode.REDEMPTION_ALREADY_USED));
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM redemption_claim WHERE account_id = "
+                + "(SELECT account_id FROM poker_user WHERE player_id = 'mail_master')", Long.class))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void cosmeticPurchaseAndLoadoutAreTransactionalAuthoritativeAndIdempotent() {
+        AuthResult account = accounts.register("测试商城", "store_master", "correct-horse-6");
+        accounts.exchangeForCrystals(account.sessionToken(), "store-exchange-001", 5_000);
+
+        var purchased = accounts.purchaseCosmetic(
+                account.sessionToken(), "store-purchase-001", "observer-frame");
+        var repeated = accounts.purchaseCosmetic(
+                account.sessionToken(), "store-purchase-001", "observer-frame");
+        assertThat(purchased.wallet()).isEqualTo(new WalletSnapshot(5_000, 180));
+        assertThat(repeated.wallet()).isEqualTo(purchased.wallet());
+        assertThat(purchased.cosmetics()).contains("observer-frame");
+
+        var equipped = accounts.equipCosmetic(account.sessionToken(), "store-equip-001",
+                CosmeticSlot.AVATAR_FRAME, "observer-frame");
+        assertThat(equipped.loadout().avatarFrame()).isEqualTo("observer-frame");
+        assertThatThrownBy(() -> accounts.equipCosmetic(account.sessionToken(), "store-equip-002",
+                CosmeticSlot.CARD_BACK, "red-lance"))
+                .isInstanceOfSatisfying(AccountException.class,
+                        error -> assertThat(error.code()).isEqualTo(AccountErrorCode.INVALID_COSMETIC));
+
+        var unequipped = accounts.equipCosmetic(account.sessionToken(), "store-equip-003",
+                CosmeticSlot.AVATAR_FRAME, null);
+        assertThat(unequipped.loadout().avatarFrame()).isNull();
+
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM cosmetic_purchase WHERE account_id = "
+                + "(SELECT account_id FROM poker_user WHERE player_id = 'store_master')", Long.class))
+                .isEqualTo(1L);
+    }
+
+    @Test
     void tableBuyInIsReservedOnceAndFinalStackIsReturnedOnce() {
         assertThat(tableSettlementListener).isNotNull();
         AuthResult account = accounts.register("测试丁", "escrow_rin", "correct-horse-4");
@@ -204,6 +279,8 @@ class PostgresHandHistoryIntegrationTest {
 
         assertThat(settled).isEqualTo(new WalletSnapshot(10_275, 0));
         assertThat(duplicate).isEqualTo(settled);
+        assertThat(accounts.tableSessionResult(account.sessionToken(), "room-escrow-1"))
+                .isEqualTo(TableSessionResult.settled(1_000, 1_275));
         TableBuyInReservation rejoined = tableEconomy.reserveBuyIn(
                 principal.accountId(), principal.gameId(), "room-escrow-1", 500, "buyin-request-004");
         assertThat(rejoined.newlyReserved()).isTrue();

@@ -43,4 +43,29 @@ describe('PlayerSeat', () => {
     fireEvent.click(screen.getByRole('button', { name: '点击或向上滑动翻开手牌' }))
     expect(screen.queryByText('点击翻牌')).toBeNull()
   })
+
+  it('renders only the cosmetic loadout supplied by the server snapshot', () => {
+    const decoratedPlayer: PlayerSnapshot = {
+      ...player,
+      cosmetics: {
+        avatarFrame: 'observer-frame',
+        cardBack: 'red-lance',
+        title: 'chosen-observer',
+      },
+    }
+
+    const view = render(
+      <PlayerSeat
+        player={decoratedPlayer}
+        isActor
+        isOwner={false}
+        isSelf
+        position={{ x: 50, y: 86 }}
+      />,
+    )
+
+    expect(view.container.querySelector('.cosmetic-avatar-frame-observer-frame')).toBeTruthy()
+    expect(view.container.querySelectorAll('.cosmetic-card-back-red-lance')).toHaveLength(2)
+    expect(screen.getByText('被选中的观测者')).toBeTruthy()
+  })
 })

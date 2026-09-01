@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LobbySignalField } from '../components/LobbySignalField'
 import { SiteHeader } from '../components/SiteHeader'
@@ -7,11 +7,14 @@ import { useAccountStore } from '../store/accountStore'
 
 export function ProfilePage() {
   const navigate = useNavigate()
-  const { profile, capabilities, exchange, updateAvatar, logout, error, clearError } = useAccountStore()
+  const { profile, capabilities, exchange, updateAvatar, redeem, logout, error, clearError } = useAccountStore()
   const [chips, setChips] = useState(100)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [avatarBusy, setAvatarBusy] = useState(false)
+  const [redemptionCode, setRedemptionCode] = useState('')
+  const [redeemBusy, setRedeemBusy] = useState(false)
+
 
   if (!profile) return null
   const currentAvatarKey = profile.avatarKey
@@ -43,6 +46,21 @@ export function ProfilePage() {
       // The account store exposes the server-safe error message.
     } finally {
       setAvatarBusy(false)
+    }
+  }
+
+  async function claimCode(event: FormEvent) {
+    event.preventDefault()
+    setRedeemBusy(true)
+    try {
+      const result = await redeem(redemptionCode)
+      const currency = result.currency === 'CRYSTAL' ? '英魂结晶' : '筹码'
+      setNotice(`兑换成功，获得 ${result.amount.toLocaleString()} ${currency}`)
+      setRedemptionCode('')
+    } catch {
+      // The account store exposes the server-safe error message.
+    } finally {
+      setRedeemBusy(false)
     }
   }
 
@@ -90,6 +108,19 @@ export function ProfilePage() {
             <div className="exchange-preview"><span>{chips.toLocaleString()} 筹码</span><b>→</b><strong>{Math.floor(chips / 10).toLocaleString()} 英魂结晶</strong></div>
             <button className="identity-submit" disabled={busy || chips <= 0 || chips % 10 !== 0 || chips > profile.wallet.chips} onClick={() => void convert()}>确认凝结（不可逆）</button>
           </section>
+          <section className="profile-panel redemption-panel">
+            <span className="profile-label">RESONANCE CODE</span>
+            <h2>兑换码</h2>
+            <form className="profile-inline-form" onSubmit={(event) => void claimCode(event)}>
+              <label className="exchange-input"><span>输入兑换码</span><input id="redemption-code" name="redemptionCode" autoComplete="off" minLength={4} maxLength={64} required value={redemptionCode} onChange={(event) => setRedemptionCode(event.target.value.toUpperCase())} /></label>
+              <button className="identity-submit" disabled={redeemBusy || redemptionCode.trim().length < 4}>{redeemBusy ? '核销中…' : '确认兑换'}</button>
+            </form>
+          </section>
+          {profile.cosmetics.length > 0 && <section className="profile-panel cosmetic-panel">
+            <span className="profile-label">SPIRIT VESTMENTS</span>
+            <h2>已拥有皮肤</h2>
+            <div className="game-id-list">{profile.cosmetics.map((skin) => <span key={skin}>{skin}</span>)}</div>
+          </section>}
         </div>
         {(notice || error) && <div className="profile-notice">{error ?? notice}<button onClick={() => { setNotice(null); clearError() }}>×</button></div>}
       </section>

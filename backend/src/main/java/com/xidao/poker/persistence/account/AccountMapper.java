@@ -15,6 +15,7 @@ import java.util.UUID;
 public interface AccountMapper {
     @Select("""
             SELECT a.account_id, a.real_name_key, a.password_hash, a.primary_game_id, a.avatar_key,
+                   a.is_admin AS admin,
                    w.chip_balance, w.crystal_balance
             FROM identity_account a
             JOIN account_wallet w ON w.account_id = a.account_id
@@ -25,6 +26,7 @@ public interface AccountMapper {
 
     @Select("""
             SELECT a.account_id, a.real_name_key, a.password_hash, a.primary_game_id, a.avatar_key,
+                   a.is_admin AS admin,
                    w.chip_balance, w.crystal_balance
             FROM poker_user u
             JOIN identity_account a ON a.account_id = u.account_id
@@ -77,8 +79,63 @@ public interface AccountMapper {
     @Update("UPDATE identity_account SET avatar_key = #{avatarKey}, updated_at = #{now} WHERE account_id = #{accountId}")
     int updateAvatar(UUID accountId, String avatarKey, Instant now);
 
+    @Update("""
+            UPDATE identity_account SET is_admin = TRUE, updated_at = #{now}
+            WHERE account_id = #{accountId}
+              AND NOT EXISTS (SELECT 1 FROM identity_account WHERE is_admin = TRUE)
+            """)
+    int promoteIfNoAdmin(UUID accountId, Instant now);
+
     @Select("SELECT player_id FROM poker_user WHERE account_id = #{accountId} ORDER BY player_id")
     List<String> listGameIds(@Param("accountId") UUID accountId);
+
+    @Select("SELECT skin_key FROM account_cosmetic WHERE account_id = #{accountId} ORDER BY acquired_at, skin_key")
+    List<String> listCosmetics(@Param("accountId") UUID accountId);
+
+    @Select("SELECT slot, skin_key FROM account_cosmetic_loadout WHERE account_id = #{accountId} ORDER BY slot")
+    List<CosmeticLoadoutRow> listCosmeticLoadout(@Param("accountId") UUID accountId);
+
+    @Select("SELECT EXISTS(SELECT 1 FROM account_cosmetic WHERE account_id = #{accountId} AND skin_key = #{skinKey})")
+    boolean ownsCosmetic(UUID accountId, String skinKey);
+
+    @Select("""
+            SELECT purchase_id, catalog_key, crystal_cost
+            FROM cosmetic_purchase WHERE account_id = #{accountId} AND request_id = #{requestId}
+            """)
+    CosmeticPurchaseRow findCosmeticPurchaseByRequest(UUID accountId, String requestId);
+
+    @Insert("""
+            INSERT INTO cosmetic_purchase
+                (purchase_id, account_id, catalog_key, crystal_cost, request_id, purchased_at)
+            VALUES (#{purchaseId}, #{accountId}, #{catalogKey}, #{crystalCost}, #{requestId}, #{now})
+            """)
+    int insertCosmeticPurchase(UUID purchaseId, UUID accountId, String catalogKey,
+                               long crystalCost, String requestId, Instant now);
+
+    @Update("""
+            UPDATE account_wallet
+            SET crystal_balance = crystal_balance - #{crystals}, version = version + 1, updated_at = #{now}
+            WHERE account_id = #{accountId} AND crystal_balance >= #{crystals}
+            """)
+    int debitCrystals(UUID accountId, long crystals, Instant now);
+
+    @Insert("""
+            INSERT INTO account_cosmetic (account_id, skin_key, acquired_at, source_purchase_id)
+            VALUES (#{accountId}, #{skinKey}, #{now}, #{purchaseId})
+            ON CONFLICT (account_id, skin_key) DO NOTHING
+            """)
+    int grantPurchasedCosmetic(UUID accountId, String skinKey, Instant now, UUID purchaseId);
+
+    @Insert("""
+            INSERT INTO account_cosmetic_loadout (account_id, slot, skin_key, equipped_at)
+            VALUES (#{accountId}, #{slot}, #{skinKey}, #{now})
+            ON CONFLICT (account_id, slot) DO UPDATE
+            SET skin_key = EXCLUDED.skin_key, equipped_at = EXCLUDED.equipped_at
+            """)
+    int equipCosmetic(UUID accountId, String slot, String skinKey, Instant now);
+
+    @org.apache.ibatis.annotations.Delete("DELETE FROM account_cosmetic_loadout WHERE account_id = #{accountId} AND slot = #{slot}")
+    int unequipCosmetic(UUID accountId, String slot);
 
     @Select("SELECT account_id FROM poker_user WHERE player_id = #{gameId} FOR UPDATE")
     UUID lockGameIdOwner(@Param("gameId") String gameId);
@@ -127,6 +184,48 @@ public interface AccountMapper {
             """)
     int convertToCrystals(UUID accountId, long chipCost, long crystals, Instant now);
 
+    @Update("""
+            UPDATE account_wallet
+            SET crystal_balance = crystal_balance + #{amount},
+                version = version + 1, updated_at = #{now}
+            WHERE account_id = #{accountId}
+            """)
+    int addCrystals(UUID accountId, long amount, Instant now);
+
+    @Select("""
+            SELECT code_hash, currency, reward_amount, max_redemptions, redeemed_count,
+                   valid_from, valid_until, enabled
+            FROM redemption_code WHERE code_hash = #{codeHash}
+            FOR UPDATE
+            """)
+    RedemptionCodeRow lockRedemptionCode(@Param("codeHash") String codeHash);
+
+    @Select("""
+            SELECT currency, reward_amount FROM redemption_claim
+            WHERE account_id = #{accountId} AND request_id = #{requestId}
+            """)
+    RedemptionClaimRow findRedemptionClaimByRequest(UUID accountId, String requestId);
+
+    @Select("""
+            SELECT currency, reward_amount FROM redemption_claim
+            WHERE account_id = #{accountId} AND code_hash = #{codeHash}
+            """)
+    RedemptionClaimRow findRedemptionClaimByCode(UUID accountId, String codeHash);
+
+    @Insert("""
+            INSERT INTO redemption_claim
+                (code_hash, account_id, request_id, currency, reward_amount, claimed_at)
+            VALUES (#{codeHash}, #{accountId}, #{requestId}, #{currency}, #{rewardAmount}, #{now})
+            """)
+    int insertRedemptionClaim(String codeHash, UUID accountId, String requestId,
+                              String currency, long rewardAmount, Instant now);
+
+    @Update("""
+            UPDATE redemption_code SET redeemed_count = redeemed_count + 1
+            WHERE code_hash = #{codeHash}
+            """)
+    int incrementRedemptionCount(@Param("codeHash") String codeHash);
+
     @Select("""
             SELECT EXISTS(
                 SELECT 1 FROM wallet_ledger
@@ -165,6 +264,86 @@ public interface AccountMapper {
             FOR UPDATE
             """)
     TableEscrowRow lockActiveEscrowBySeat(String roomId, String gameId);
+
+    @Select("""
+            SELECT escrow_id, account_id, game_id, room_id, buy_in, returned_chips, status
+            FROM table_buy_in
+            WHERE room_id = #{roomId} AND account_id = #{accountId}
+            ORDER BY created_at DESC LIMIT 1
+            """)
+    TableEscrowRow findLatestEscrow(UUID accountId, String roomId);
+
+    @Select("""
+            SELECT m.mail_id, m.type, m.subject, m.body, m.reward_chips, m.reward_crystals,
+                   m.reward_skin_key, m.created_at, am.read_at, am.claimed_at
+            FROM account_mail am JOIN mail_message m ON m.mail_id = am.mail_id
+            WHERE am.account_id = #{accountId}
+            ORDER BY m.created_at DESC LIMIT 100
+            """)
+    List<MailRow> listMail(@Param("accountId") UUID accountId);
+
+    @Select("SELECT COUNT(*) FROM account_mail WHERE account_id = #{accountId} AND read_at IS NULL")
+    long unreadMailCount(@Param("accountId") UUID accountId);
+
+    @Select("""
+            SELECT m.mail_id, m.type, m.subject, m.body, m.reward_chips, m.reward_crystals,
+                   m.reward_skin_key, m.created_at, am.read_at, am.claimed_at
+            FROM account_mail am JOIN mail_message m ON m.mail_id = am.mail_id
+            WHERE am.account_id = #{accountId} AND am.mail_id = #{mailId}
+            """)
+    MailRow findMail(UUID accountId, UUID mailId);
+
+    @Select("""
+            SELECT m.mail_id, m.type, m.subject, m.body, m.reward_chips, m.reward_crystals,
+                   m.reward_skin_key, m.created_at, am.read_at, am.claimed_at
+            FROM account_mail am JOIN mail_message m ON m.mail_id = am.mail_id
+            WHERE am.account_id = #{accountId} AND am.mail_id = #{mailId}
+            FOR UPDATE OF am
+            """)
+    MailRow lockMail(UUID accountId, UUID mailId);
+
+    @Update("UPDATE account_mail SET read_at = COALESCE(read_at, #{now}) WHERE account_id = #{accountId} AND mail_id = #{mailId}")
+    int markMailRead(UUID accountId, UUID mailId, Instant now);
+
+    @Update("""
+            UPDATE account_mail SET read_at = COALESCE(read_at, #{now}), claimed_at = #{now},
+                claim_request_id = #{requestId}
+            WHERE account_id = #{accountId} AND mail_id = #{mailId} AND claimed_at IS NULL
+            """)
+    int markMailClaimed(UUID accountId, UUID mailId, String requestId, Instant now);
+
+    @Insert("""
+            INSERT INTO account_cosmetic (account_id, skin_key, acquired_at, source_mail_id)
+            VALUES (#{accountId}, #{skinKey}, #{now}, #{mailId})
+            ON CONFLICT (account_id, skin_key) DO NOTHING
+            """)
+    int grantCosmetic(UUID accountId, String skinKey, Instant now, UUID mailId);
+
+    @Insert("""
+            INSERT INTO mail_message
+                (mail_id, request_id, sender_account_id, type, subject, body,
+                 reward_chips, reward_crystals, reward_skin_key, created_at)
+            VALUES (#{mailId}, #{requestId}, #{senderAccountId}, #{type}, #{subject}, #{body},
+                    #{rewardChips}, #{rewardCrystals}, #{rewardSkinKey}, #{now})
+            ON CONFLICT (request_id) DO NOTHING
+            """)
+    int insertMailMessage(UUID mailId, String requestId, UUID senderAccountId, String type,
+                          String subject, String body, long rewardChips, long rewardCrystals,
+                          String rewardSkinKey, Instant now);
+
+    @Select("""
+            SELECT m.mail_id, m.type, m.subject, m.body, m.reward_chips, m.reward_crystals,
+                   m.reward_skin_key, m.created_at, NULL AS read_at, NULL AS claimed_at
+            FROM mail_message m WHERE m.request_id = #{requestId}
+            """)
+    MailRow findMailByRequest(@Param("requestId") String requestId);
+
+    @Insert("""
+            INSERT INTO account_mail (mail_id, account_id)
+            SELECT #{mailId}, account_id FROM identity_account
+            ON CONFLICT DO NOTHING
+            """)
+    int distributeMailToAll(@Param("mailId") UUID mailId);
 
     @Update("""
             UPDATE account_wallet SET chip_balance = chip_balance - #{buyIn},

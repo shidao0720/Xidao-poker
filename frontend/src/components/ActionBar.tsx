@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { ActionType, GameSnapshot } from '../types/protocol'
+import { cosmeticClass } from '../utils/cosmetics'
 
 interface ActionBarProps {
   snapshot: GameSnapshot
   playerId: string
   onAction: (action: ActionType, amount?: number) => void
+  effectKey?: string | null | undefined
 }
 
 const actionLabels: Record<ActionType, string> = {
@@ -16,7 +18,7 @@ const actionLabels: Record<ActionType, string> = {
   ALL_IN: '全下',
 }
 
-export function ActionBar({ snapshot, playerId, onAction }: ActionBarProps) {
+export function ActionBar({ snapshot, playerId, onAction, effectKey }: ActionBarProps) {
   const options = snapshot.actionOptions
   const legal = options.legalActions
   const standardAggressiveAction = legal.includes('RAISE') ? 'RAISE' : legal.includes('BET') ? 'BET' : null
@@ -110,6 +112,7 @@ export function ActionBar({ snapshot, playerId, onAction }: ActionBarProps) {
       y={feedback.y}
       targetX={feedback.targetX}
       targetY={feedback.targetY}
+      effectKey={effectKey}
     />
   )
 
@@ -118,7 +121,7 @@ export function ActionBar({ snapshot, playerId, onAction }: ActionBarProps) {
   return (
     <>
       <section
-        className={`action-dock${amount === options.maximumTo ? ' is-max' : ''}`}
+        className={`action-dock${amount === options.maximumTo ? ' is-max' : ''} ${cosmeticClass('button-effect', effectKey)}`}
         style={dockStyle}
         aria-label="玩家操作"
       >
@@ -189,12 +192,14 @@ function ActionPulse({
   y,
   targetX,
   targetY,
+  effectKey,
 }: {
   action: ActionType
   x: number
   y: number
   targetX: number
   targetY: number
+  effectKey?: string | null | undefined
 }) {
   const wagerFlight = action === 'CALL' || action === 'BET' || action === 'RAISE'
   const particleCount = wagerFlight ? action === 'CALL' ? 4 : 7 : 12
@@ -212,7 +217,7 @@ function ActionPulse({
   } as CSSProperties
   return (
     <span
-      className={`action-feedback-wave${wagerFlight ? ' is-wager-flight' : ''}`}
+      className={`action-feedback-wave${wagerFlight ? ' is-wager-flight' : ''} ${cosmeticClass('button-effect', effectKey)}`}
       data-action={action}
       data-testid="action-feedback-burst"
       style={style}

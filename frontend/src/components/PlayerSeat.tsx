@@ -2,6 +2,7 @@ import { useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import type { PlayerSnapshot } from '../types/protocol'
 import { CardView } from './CardView'
 import { AvatarView } from './AvatarView'
+import { cosmeticClass, cosmeticLabel } from '../utils/cosmetics'
 
 const statusLabels: Record<PlayerSnapshot['status'], string> = {
   ACTIVE: '在局中',
@@ -40,6 +41,9 @@ export function PlayerSeat({
     '--deal-from-y': `${(32 - position.y) * 0.55}vh`,
   } as CSSProperties
   const canReveal = isSelf && player.holeCards.length > 0 && !cardsRevealed
+  const avatarFrame = cosmeticClass('cosmetic-avatar-frame', player.cosmetics?.avatarFrame)
+  const title = cosmeticLabel(player.cosmetics?.title)
+  const cardBack = player.cosmetics?.cardBack
 
   function revealCards() {
     if (canReveal) setCardsRevealed(true)
@@ -82,18 +86,20 @@ export function PlayerSeat({
               key={`${card.rank}-${card.suit}-${index}`}
               style={{ '--card-delay': `${index * 130}ms` } as CSSProperties}
             >
-              <CardView card={card} compact revealed={!isSelf || cardsRevealed} />
+              <CardView card={card} compact revealed={!isSelf || cardsRevealed} backKey={cardBack} />
             </span>
           ))
         ) : player.inHand ? (
           <>
-            <span className="seat-card-flight" style={{ '--card-delay': '0ms' } as CSSProperties}><CardView hidden compact /></span>
-            <span className="seat-card-flight" style={{ '--card-delay': '130ms' } as CSSProperties}><CardView hidden compact /></span>
+            <span className="seat-card-flight" style={{ '--card-delay': '0ms' } as CSSProperties}><CardView hidden compact backKey={cardBack} /></span>
+            <span className="seat-card-flight" style={{ '--card-delay': '130ms' } as CSSProperties}><CardView hidden compact backKey={cardBack} /></span>
           </>
         ) : null}
       </div>
       <div className="seat-panel">
-        <AvatarView className="avatar" avatarKey={player.avatarKey} name={player.name} />
+        <span className={`seat-avatar-cosmetic${avatarFrame ? ` ${avatarFrame}` : ''}`}>
+          <AvatarView className="avatar" avatarKey={player.avatarKey} name={player.name} />
+        </span>
         <div className="seat-copy">
           <div className="seat-name">
             <span>{player.name}</span>
@@ -106,6 +112,7 @@ export function PlayerSeat({
           >
             {displayStack.toLocaleString()} 筹码
           </strong>
+          {title && <small className={`seat-cosmetic-title ${cosmeticClass('cosmetic-title', player.cosmetics?.title)}`}>{title}</small>}
         </div>
         <span className="status-pill">{isActor ? '行动中' : statusLabels[player.status]}</span>
       </div>

@@ -1,6 +1,7 @@
 package com.xidao.poker.web.ws;
 
 import com.xidao.poker.application.account.AccountPrincipal;
+import com.xidao.poker.application.account.AccountProfile;
 import com.xidao.poker.application.account.AccountService;
 import com.xidao.poker.application.account.AccountException;
 import com.xidao.poker.application.account.AccountErrorCode;
@@ -66,6 +67,7 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
             String playerId;
             String playerName = optionalTrimmed(query, "playerName");
             String avatarKey = AvatarCatalog.normalize(optionalTrimmed(query, "avatarKey"));
+            Map<String, String> cosmetics = Map.of();
             String epochText = optionalTrimmed(query, "connectionEpoch");
             String resumeToken = optionalTrimmed(query, "resumeToken");
             int protocolVersion = requiredPositiveInteger(query, "protocolVersion");
@@ -75,7 +77,9 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
             if (authenticationRequired) {
                 String sessionToken = requiredSessionCookie(request);
                 principal = accounts.authenticate(sessionToken);
-                avatarKey = accounts.profile(sessionToken).avatarKey();
+                AccountProfile profile = accounts.profile(sessionToken);
+                avatarKey = profile.avatarKey();
+                cosmetics = profile.loadout().publicAppearance();
                 playerId = principal.gameId();
                 playerName = principal.gameId();
             } else {
@@ -104,6 +108,7 @@ public class PokerHandshakeInterceptor implements HandshakeInterceptor {
                             playerId,
                             playerName,
                             avatarKey,
+                            cosmetics,
                             epoch,
                             resumeToken,
                             protocolVersion,

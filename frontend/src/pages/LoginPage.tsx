@@ -42,7 +42,7 @@ export function LoginPage() {
           {error && <div className="identity-error" role="alert">{error}</div>}
           <button className="identity-submit" disabled={submitting}>{submitting ? '验证中…' : kind === 'login' ? '进入牌桌大厅' : '创建身份并领取 10,000 筹码'}</button>
         </form>
-        <small className="play-money-notice">仅限娱乐积分 · 无现金价值 · 不支持充值、提现或玩家间转账</small>
+        <small className="play-money-notice">祝您玩的愉快</small>
       </section>
     </main>
   )

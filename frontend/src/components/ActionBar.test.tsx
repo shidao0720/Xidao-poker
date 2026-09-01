@@ -54,6 +54,22 @@ function callableSnapshot(): GameSnapshot {
 }
 
 describe('ActionBar', () => {
+  it('applies the equipped button effect to the controls and feedback burst', () => {
+    const onAction = vi.fn()
+    const view = render(
+      <ActionBar
+        snapshot={callableSnapshot()}
+        playerId="player-a"
+        onAction={onAction}
+        effectKey="command-spell"
+      />,
+    )
+
+    expect(view.container.querySelector('.action-dock.button-effect-command-spell')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /跟注/ }))
+    expect(screen.getByTestId('action-feedback-burst').classList.contains('button-effect-command-spell')).toBe(true)
+  })
+
   it('shows the call amount but sends CALL as an amount-free intent', () => {
     const onAction = vi.fn()
     render(<ActionBar snapshot={callableSnapshot()} playerId="player-a" onAction={onAction} />)

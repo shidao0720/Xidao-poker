@@ -88,6 +88,7 @@ export interface PlayerSnapshot {
   ready: boolean
   holeCards: Card[]
   avatarKey?: string
+  cosmetics?: Record<string, string>
 }
 
 export interface ActionOptions {

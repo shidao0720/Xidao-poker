@@ -154,11 +154,15 @@ Lobby / Table / Action components
 
 账户、钱包和牌桌买入属于低频关键事务，启用 PostgreSQL 后同步提交，不走手牌历史异步队列。首次入座会把买入从账户钱包转入唯一的 `table_buy_in` 托管记录；重连复用该记录，不会重复扣款。只有服务端产生带最终筹码的 `PLAYER_LEFT` 后才返还余额，因此主动离开、断线超时和 All-in 后延迟离桌会汇入同一结算路径。数据库瞬时失败时结算监听器以幂等请求号重试。
 
+离桌后的盈亏展示同样以 `table_buy_in` 为准：前端回到大厅后查询托管状态，`ACTIVE` 时只显示“结算处理中”，`SETTLED` 后以 `returned_chips - buy_in` 展示净输赢并刷新钱包。兑换码不保存明文，只保存标准化代码的 SHA-256 摘要；核销记录、全局次数、钱包余额与账本流水在同一个数据库事务中更新。
+
 ### 3. 双货币是单向消耗模型
 
 - 筹码用于牌桌买入、签到奖励和排行榜统计。
 - `10 筹码 = 1 英魂结晶`，兑换必须由玩家明确确认且只能单向进行。
-- 商城只能使用英魂结晶；当前商城为空，商品与库存模型后续扩展。
+- 商城只能使用英魂结晶；首批 14 件商品覆盖头像框、牌背、称号、局内按钮效果、结算演出和组合珍藏，“主页风格”分类暂时保留为空。
+- 商品目录、价格、购买资格和装备槽位全部由服务端裁决。购买命令携带 `requestId`，网络重试不会重复扣款；客户端只能装备数据库中已经拥有且类别匹配的物品。
+- 已装备外观在 WebSocket 身份握手时由账户档案注入房间状态，客户端不能通过查询参数伪造皮肤。头像框、牌背、称号、局内按钮效果和胜利结算演出会进入牌桌查看者快照；主页风格不进入牌局。
 - 同一真实身份可拥有多个游戏 ID，但一个游戏 ID 只能归属一个真实身份；同一真实身份同时只能占用一个有资金的牌桌席位。
 - 两种货币都只属于 play-money，不可充值、提现、换现或在玩家间转移。
 
@@ -290,9 +294,17 @@ handId + turnId（行动命令）
 | `POST` | `/api/auth/logout` | 注销 HttpOnly 会话 Cookie |
 | `GET` | `/api/account/me` | 获取自己的游戏 ID 列表和双货币余额 |
 | `POST` | `/api/account/check-in` | 每个北京时间自然日签到一次并领取 500 筹码 |
+| `GET` | `/api/account/mail` | 获取自己的站内收件箱与未读数 |
+| `PUT` | `/api/account/mail/{mailId}/read` | 将本人邮件标记为已读 |
+| `POST` | `/api/account/mail/{mailId}/claim` | 幂等领取邮件中的筹码、结晶或皮肤附件 |
+| `POST` | `/api/admin/mail/broadcast` | 仅管理员可向所有现有账户群发公告、通知或奖励 |
+| `POST` | `/api/account/redeem` | 幂等核销兑换码并把奖励写入钱包账本 |
+| `GET` | `/api/account/table-result?roomId=...` | 查询本人指定牌桌的托管结算与净输赢 |
 | `POST` | `/api/wallet/exchange` | 按 10:1 将筹码单向兑换为英魂结晶 |
 | `GET` | `/api/leaderboards` | 获取胜利手数、累计奖金和单手净收益三个 Top 3 |
-| `GET` | `/api/shop/items` | 获取商城商品；当前返回空列表 |
+| `GET` | `/api/store/catalog` | 获取服务端权威商城目录和价格 |
+| `POST` | `/api/store/purchase` | 用英魂结晶幂等购买商品或组合珍藏 |
+| `PUT` | `/api/account/loadout/{slot}` | 装备或卸下已拥有的对应槽位外观 |
 
 创建房间请求示例：
 
@@ -467,7 +479,7 @@ npm run build
 
 前端状态同步测试重点锁定 Snapshot 整体替换、事件序号缺口、服务端行动投影，以及观察者/破产玩家不进入行动队列。测试数量会随开发持续增长，以本地验证和 CI 的实际结果为准。
 
-当前本地基线：后端共 138 项测试，非 Docker 环境执行的 133 项通过；另外 5 项 Testcontainers PostgreSQL 测试在 Docker Desktop 可用时执行，已覆盖真实迁移、身份约束、双货币、牌桌托管、幂等和事务回滚；前端 32 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
+当前本地基线：后端共 140 项测试，非 Docker 环境执行的 134 项通过；另外 6 项 Testcontainers PostgreSQL 测试在 Docker Desktop 可用时执行，已覆盖真实迁移、身份约束、邮件、兑换码、双货币、牌桌托管、幂等和事务回滚；前端 32 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
 
 ## Git 工作流
 
@@ -568,7 +580,7 @@ lan-start.bat
 若还没有 JAR，`lan-start.bat` 会先调用构建脚本。启动日志会输出所有可信私有 IPv4 候选，例如：
 
 ```text
-LAN_ACCESS_URL interface=... url=http://192.168.10.231:8080
+LAN_ACCESS_URL interface=... url=http://<本机当前局域网IP>:8080
 ```
 
 存在 Wi-Fi、网线、VPN 或虚拟网卡时会列出多个地址，不会盲目选择第一个；主机应把与玩家处于同一网络的地址发给其他人。玩家设备只需打开该地址。Windows 防火墙只应在“专用网络”中允许 Java 或 Docker 的应用端口，不应向公共网络开放。
@@ -656,6 +668,11 @@ mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 - `account_wallet` / `wallet_ledger`：筹码、英魂结晶与不可变余额流水
 - `daily_check_in`：按北京时间自然日去重的签到奖励
 - `table_buy_in`：入桌买入托管、最终筹码和幂等离桌结算
+- `redemption_code` / `redemption_claim`：兑换码摘要、有效期、全局限额与每账户核销记录
+- `mail_message` / `account_mail`：管理员群发内容、玩家未读状态和附件领取状态
+- `account_cosmetic`：通过奖励邮件或商城购买取得的装扮库存
+- `cosmetic_purchase`：商城购买请求、价格快照与幂等结果
+- `account_cosmetic_loadout`：每个账户各装扮槽位当前装备项
 
 同一手使用 `(game_id, hand_id)` 唯一键。重复异步提交返回 `ALREADY_EXISTS`，不会重复插入行动或累加玩家统计；一手牌的主记录、玩家、行动与统计在同一事务中提交。
 
@@ -732,8 +749,10 @@ Xidao-poker/
 - [x] WebSocket 协议、身份绑定与实时广播
 - [x] PostgreSQL 手牌历史、行动记录与玩家统计持久化
 - [x] 真实身份、多游戏 ID、HttpOnly 会话与 BCrypt 密码
-- [x] 双货币钱包、每日签到、三个 Top 3 与空商城
+- [x] 双货币钱包、每日签到与三个 Top 3
+- [x] 服务端权威商城、幂等购买、装扮库存与牌桌装备效果
 - [x] 幂等牌桌买入托管、重连防重复扣款和离桌返还
+- [x] 站内邮件、管理员群发奖励、兑换码核销和离桌净输赢提示
 - [x] React 大厅、等待房间和牌桌 MVP
 - [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
 - [x] WebSocket 30 秒宽限调度与 token / epoch 安全重连

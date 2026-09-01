@@ -24,7 +24,7 @@ export function LeaderboardPage() {
       <section className="portal-content">
         <span className="portal-code">THRONE OF HEROES / RECORDS</span>
         <h1>Leaderboard</h1>
-        <p className="portal-lead">英灵榜</p>
+        <p className="portal-lead">排行榜</p>
         {error && <div className="alert" role="alert">{error}</div>}
         <div className="leaderboard-grid">
           {rankingGroups.map(([label, key], index) => (

@@ -23,6 +23,8 @@ public class PostgresAccountService implements AccountService, TableEconomyServi
     public static final long CHIPS_PER_CRYSTAL = 10;
     private static final Duration SESSION_TTL = Duration.ofDays(7);
     private static final Pattern REQUEST_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
+    private static final Pattern REDEMPTION_CODE = Pattern.compile("[A-Z0-9_-]{4,64}");
+    private static final Pattern SKIN_KEY = Pattern.compile("[a-z0-9_-]{1,64}");
 
     private final AccountMapper mapper;
     private final HistorySchemaInitializer schema;
@@ -59,6 +61,7 @@ public class PostgresAccountService implements AccountService, TableEconomyServi
             accountId = UUID.randomUUID();
             String passwordHash = passwords.encode(password);
             mapper.insertAccount(accountId, cleanName, nameKey, passwordHash, now);
+            mapper.promoteIfNoAdmin(accountId, now);
             mapper.insertWallet(accountId, now);
             mapper.insertLedger(UUID.randomUUID(), accountId, "CHIP", INITIAL_CHIPS,
                     INITIAL_CHIPS, "ACCOUNT_CREATED", "account-created", now);
@@ -163,6 +166,217 @@ public class PostgresAccountService implements AccountService, TableEconomyServi
     }
 
     @Override
+    @Transactional(transactionManager = "historyTransactionManager")
+    public RedemptionResult redeemCode(String sessionToken, String requestId, String code) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        validateRequestId(requestId);
+        String normalizedCode = normalizeRedemptionCode(code);
+        String codeHash = hashToken("redemption:" + normalizedCode);
+        mapper.lockWallet(principal.accountId());
+
+        RedemptionClaimRow repeatedRequest = mapper.findRedemptionClaimByRequest(
+                principal.accountId(), requestId);
+        if (repeatedRequest != null) {
+            return new RedemptionResult(repeatedRequest.currency(), repeatedRequest.rewardAmount(),
+                    wallet(principal.accountId()));
+        }
+
+        RedemptionCodeRow offer = mapper.lockRedemptionCode(codeHash);
+        Instant now = clock.instant();
+        if (offer == null) {
+            throw new AccountException(AccountErrorCode.INVALID_REDEMPTION_CODE,
+                    "redemption code is invalid");
+        }
+        if (!offer.enabled()
+                || now.isBefore(offer.validFrom())
+                || (offer.validUntil() != null && now.isAfter(offer.validUntil()))
+                || (offer.maxRedemptions() != null && offer.redeemedCount() >= offer.maxRedemptions())) {
+            throw new AccountException(AccountErrorCode.REDEMPTION_UNAVAILABLE,
+                    "redemption code is unavailable");
+        }
+        if (mapper.findRedemptionClaimByCode(principal.accountId(), codeHash) != null) {
+            throw new AccountException(AccountErrorCode.REDEMPTION_ALREADY_USED,
+                    "redemption code has already been used by this identity");
+        }
+
+        mapper.insertRedemptionClaim(codeHash, principal.accountId(), requestId,
+                offer.currency(), offer.rewardAmount(), now);
+        mapper.incrementRedemptionCount(codeHash);
+        if ("CHIP".equals(offer.currency())) {
+            mapper.addChips(principal.accountId(), offer.rewardAmount(), now);
+        } else if ("CRYSTAL".equals(offer.currency())) {
+            mapper.addCrystals(principal.accountId(), offer.rewardAmount(), now);
+        } else {
+            throw new IllegalStateException("unsupported redemption currency");
+        }
+        WalletSnapshot wallet = wallet(principal.accountId());
+        long balanceAfter = "CHIP".equals(offer.currency()) ? wallet.chips() : wallet.spiritCrystals();
+        mapper.insertLedger(UUID.randomUUID(), principal.accountId(), offer.currency(), offer.rewardAmount(),
+                balanceAfter, "REDEMPTION_CODE", requestId, now);
+        return new RedemptionResult(offer.currency(), offer.rewardAmount(), wallet);
+    }
+
+    @Override
+    public TableSessionResult tableSessionResult(String sessionToken, String roomId) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        validateRoomId(roomId);
+        TableEscrowRow escrow = mapper.findLatestEscrow(principal.accountId(), roomId);
+        if (escrow == null) {
+            throw new AccountException(AccountErrorCode.TABLE_RESULT_NOT_FOUND,
+                    "table settlement was not found");
+        }
+        if ("ACTIVE".equals(escrow.status())) return TableSessionResult.active(escrow.buyIn());
+        long returned = escrow.returnedChips() == null ? 0 : escrow.returnedChips();
+        return TableSessionResult.settled(escrow.buyIn(), returned);
+    }
+
+    @Override
+    public MailInbox inbox(String sessionToken) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        return new MailInbox(mapper.listMail(principal.accountId()).stream()
+                .map(PostgresAccountService::mailItem).toList(),
+                mapper.unreadMailCount(principal.accountId()));
+    }
+
+    @Override
+    @Transactional(transactionManager = "historyTransactionManager")
+    public MailItem markMailRead(String sessionToken, UUID mailId) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        if (mailId == null || mapper.markMailRead(principal.accountId(), mailId, clock.instant()) != 1) {
+            throw new AccountException(AccountErrorCode.MAIL_NOT_FOUND, "mail was not found");
+        }
+        return mailItem(mapper.findMail(principal.accountId(), mailId));
+    }
+
+    @Override
+    @Transactional(transactionManager = "historyTransactionManager")
+    public MailClaimResult claimMail(String sessionToken, UUID mailId, String requestId) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        validateRequestId(requestId);
+        mapper.lockWallet(principal.accountId());
+        MailRow row = mapper.lockMail(principal.accountId(), mailId);
+        if (row == null) throw new AccountException(AccountErrorCode.MAIL_NOT_FOUND, "mail was not found");
+        MailItem current = mailItem(row);
+        if (!current.hasAttachment()) {
+            throw new AccountException(AccountErrorCode.INVALID_MAIL, "mail has no attachment");
+        }
+        if (!current.claimed()) {
+            Instant now = clock.instant();
+            if (row.rewardChips() > 0) mapper.addChips(principal.accountId(), row.rewardChips(), now);
+            if (row.rewardCrystals() > 0) mapper.addCrystals(principal.accountId(), row.rewardCrystals(), now);
+            if (row.rewardSkinKey() != null) {
+                mapper.grantCosmetic(principal.accountId(), row.rewardSkinKey(), now, mailId);
+            }
+            if (mapper.markMailClaimed(principal.accountId(), mailId, requestId, now) != 1) {
+                throw new IllegalStateException("mail claim state changed unexpectedly");
+            }
+            WalletSnapshot wallet = wallet(principal.accountId());
+            if (row.rewardChips() > 0) {
+                mapper.insertLedger(UUID.randomUUID(), principal.accountId(), "CHIP", row.rewardChips(),
+                        wallet.chips(), "MAIL_REWARD", requestId, now);
+            }
+            if (row.rewardCrystals() > 0) {
+                mapper.insertLedger(UUID.randomUUID(), principal.accountId(), "CRYSTAL", row.rewardCrystals(),
+                        wallet.spiritCrystals(), "MAIL_REWARD", requestId, now);
+            }
+        }
+        return new MailClaimResult(mailItem(mapper.findMail(principal.accountId(), mailId)),
+                wallet(principal.accountId()), mapper.listCosmetics(principal.accountId()));
+    }
+
+    @Override
+    @Transactional(transactionManager = "historyTransactionManager")
+    public MailItem broadcastMail(String sessionToken, String requestId, BroadcastMailCommand command) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        validateRequestId(requestId);
+        AccountRow sender = mapper.findByGameId(principal.gameId());
+        if (sender == null || !sender.admin()) {
+            throw new AccountException(AccountErrorCode.FORBIDDEN, "administrator access is required");
+        }
+        BroadcastMailCommand clean = validateMail(command);
+        UUID mailId = UUID.randomUUID();
+        Instant now = clock.instant();
+        mapper.insertMailMessage(mailId, requestId, principal.accountId(), clean.type(),
+                clean.subject(), clean.body(), clean.rewardChips(), clean.rewardCrystals(),
+                clean.rewardSkinKey(), now);
+        MailRow row = mapper.findMailByRequest(requestId);
+        if (row == null) throw new IllegalStateException("mail broadcast could not be created");
+        mapper.distributeMailToAll(row.mailId());
+        return mailItem(row);
+    }
+
+    @Override
+    public List<StoreItem> storeCatalog(String sessionToken) {
+        authenticate(sessionToken);
+        return CosmeticCatalog.items();
+    }
+
+    @Override
+    @Transactional(transactionManager = "historyTransactionManager")
+    public StorePurchaseResult purchaseCosmetic(String sessionToken, String requestId, String itemKey) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        validateRequestId(requestId);
+        StoreItem requested = CosmeticCatalog.require(itemKey);
+        mapper.lockWallet(principal.accountId());
+
+        CosmeticPurchaseRow repeated = mapper.findCosmeticPurchaseByRequest(principal.accountId(), requestId);
+        if (repeated != null) {
+            if (!repeated.catalogKey().equals(requested.key())) {
+                throw new AccountException(AccountErrorCode.STORE_REQUEST_CONFLICT,
+                        "request ID was already used for another store item");
+            }
+            return purchaseResult(principal.accountId(), requested);
+        }
+
+        List<String> owned = mapper.listCosmetics(principal.accountId());
+        if (requested.grants().stream().allMatch(owned::contains)) {
+            throw new AccountException(AccountErrorCode.COSMETIC_ALREADY_OWNED,
+                    "all cosmetics in this item are already owned");
+        }
+
+        Instant now = clock.instant();
+        if (mapper.debitCrystals(principal.accountId(), requested.priceCrystals(), now) != 1) {
+            throw new AccountException(AccountErrorCode.INSUFFICIENT_CRYSTALS,
+                    "insufficient spirit crystals");
+        }
+        UUID purchaseId = UUID.randomUUID();
+        mapper.insertCosmeticPurchase(purchaseId, principal.accountId(), requested.key(),
+                requested.priceCrystals(), requestId, now);
+        requested.grants().forEach(grant ->
+                mapper.grantPurchasedCosmetic(principal.accountId(), grant, now, purchaseId));
+
+        WalletSnapshot wallet = wallet(principal.accountId());
+        mapper.insertLedger(UUID.randomUUID(), principal.accountId(), "CRYSTAL",
+                -requested.priceCrystals(), wallet.spiritCrystals(), "STORE_PURCHASE", requestId, now);
+        return purchaseResult(principal.accountId(), requested);
+    }
+
+    @Override
+    @Transactional(transactionManager = "historyTransactionManager")
+    public AccountProfile equipCosmetic(String sessionToken, String requestId,
+                                        CosmeticSlot slot, String itemKey) {
+        AccountPrincipal principal = authenticate(sessionToken);
+        validateRequestId(requestId);
+        if (slot == null) throw new AccountException(AccountErrorCode.INVALID_COSMETIC, "cosmetic slot is required");
+        if (itemKey == null || itemKey.isBlank()) {
+            mapper.unequipCosmetic(principal.accountId(), slot.name());
+            return profile(principal.accountId(), principal.gameId());
+        }
+
+        StoreItem item = CosmeticCatalog.require(itemKey);
+        if (CosmeticCatalog.slot(item) != slot) {
+            throw new AccountException(AccountErrorCode.INVALID_COSMETIC,
+                    "cosmetic does not belong to this loadout slot");
+        }
+        if (!mapper.ownsCosmetic(principal.accountId(), item.key())) {
+            throw new AccountException(AccountErrorCode.INVALID_COSMETIC,
+                    "cosmetic is not owned by this account");
+        }
+        mapper.equipCosmetic(principal.accountId(), slot.name(), item.key(), clock.instant());
+        return profile(principal.accountId(), principal.gameId());
+    }
+
+    @Override
     public Leaderboards leaderboards() {
         schema.ensureReady();
         return new Leaderboards(rank(mapper.topHandsWon()), rank(mapper.topTotalWinnings()),
@@ -255,7 +469,32 @@ public class PostgresAccountService implements AccountService, TableEconomyServi
     private AccountProfile profile(UUID accountId, String gameId) {
         AccountRow account = mapper.findByGameId(gameId);
         return new AccountProfile(gameId, mapper.listGameIds(accountId), wallet(accountId),
-                account == null ? AvatarCatalog.DEFAULT : account.avatarKey());
+                account == null ? AvatarCatalog.DEFAULT : account.avatarKey(),
+                account != null && account.admin(), mapper.listCosmetics(accountId), loadout(accountId));
+    }
+
+    private StorePurchaseResult purchaseResult(UUID accountId, StoreItem item) {
+        return new StorePurchaseResult(item, wallet(accountId), mapper.listCosmetics(accountId), loadout(accountId));
+    }
+
+    private CosmeticLoadout loadout(UUID accountId) {
+        String avatarFrame = null;
+        String cardBack = null;
+        String title = null;
+        String buttonEffect = null;
+        String victoryEffect = null;
+        String profileStyle = null;
+        for (CosmeticLoadoutRow row : mapper.listCosmeticLoadout(accountId)) {
+            switch (CosmeticSlot.fromApi(row.slot())) {
+                case AVATAR_FRAME -> avatarFrame = row.skinKey();
+                case CARD_BACK -> cardBack = row.skinKey();
+                case TITLE -> title = row.skinKey();
+                case BUTTON_EFFECT -> buttonEffect = row.skinKey();
+                case VICTORY_EFFECT -> victoryEffect = row.skinKey();
+                case PROFILE_STYLE -> profileStyle = row.skinKey();
+            }
+        }
+        return new CosmeticLoadout(avatarFrame, cardBack, title, buttonEffect, victoryEffect, profileStyle);
     }
 
     private WalletSnapshot wallet(UUID accountId) {
@@ -288,6 +527,47 @@ public class PostgresAccountService implements AccountService, TableEconomyServi
         if (password == null || password.length() < 8 || password.length() > 72) {
             throw new IllegalArgumentException("password length must be between 8 and 72");
         }
+    }
+
+    private static MailItem mailItem(MailRow row) {
+        if (row == null) throw new AccountException(AccountErrorCode.MAIL_NOT_FOUND, "mail was not found");
+        return new MailItem(row.mailId(), row.type(), row.subject(), row.body(), row.rewardChips(),
+                row.rewardCrystals(), row.rewardSkinKey(), row.createdAt(), row.readAt() != null,
+                row.claimedAt() != null);
+    }
+
+    private static BroadcastMailCommand validateMail(BroadcastMailCommand command) {
+        if (command == null) throw new AccountException(AccountErrorCode.INVALID_MAIL, "mail is required");
+        String type = command.type() == null ? "" : command.type().trim().toUpperCase(Locale.ROOT);
+        if (!List.of("ANNOUNCEMENT", "NOTICE", "REWARD").contains(type)) {
+            throw new AccountException(AccountErrorCode.INVALID_MAIL, "mail type is invalid");
+        }
+        String subject = command.subject() == null ? "" : command.subject().trim();
+        String body = command.body() == null ? "" : command.body().trim();
+        if (subject.isEmpty() || subject.length() > 80 || body.isEmpty() || body.length() > 2000
+                || command.rewardChips() < 0 || command.rewardCrystals() < 0
+                || command.rewardChips() > 10_000_000 || command.rewardCrystals() > 1_000_000) {
+            throw new AccountException(AccountErrorCode.INVALID_MAIL, "mail content or reward is invalid");
+        }
+        String skin = command.rewardSkinKey() == null ? null : command.rewardSkinKey().trim().toLowerCase(Locale.ROOT);
+        if (skin != null && skin.isEmpty()) skin = null;
+        if (skin != null && !SKIN_KEY.matcher(skin).matches()) {
+            throw new AccountException(AccountErrorCode.INVALID_MAIL, "skin key is invalid");
+        }
+        if (!"REWARD".equals(type) && (command.rewardChips() > 0 || command.rewardCrystals() > 0 || skin != null)) {
+            throw new AccountException(AccountErrorCode.INVALID_MAIL, "only reward mail may contain attachments");
+        }
+        return new BroadcastMailCommand(type, subject, body, command.rewardChips(), command.rewardCrystals(), skin);
+    }
+
+    private static String normalizeRedemptionCode(String value) {
+        String clean = value == null ? "" : Normalizer.normalize(value.trim(), Normalizer.Form.NFKC)
+                .toUpperCase(Locale.ROOT);
+        if (!REDEMPTION_CODE.matcher(clean).matches()) {
+            throw new AccountException(AccountErrorCode.INVALID_REDEMPTION_CODE,
+                    "redemption code is invalid");
+        }
+        return clean;
     }
 
     private static void validateRequestId(String requestId) {

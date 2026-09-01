@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { Card } from '../types/protocol'
+import { cosmeticClass } from '../utils/cosmetics'
 
 const rankLabels: Record<Card['rank'], string> = {
   TWO: '2',
@@ -31,6 +32,7 @@ interface CardViewProps {
   revealed?: boolean
   dealing?: boolean
   dealDelay?: number
+  backKey?: string | null | undefined
 }
 
 export function CardView({
@@ -40,12 +42,14 @@ export function CardView({
   revealed = true,
   dealing = false,
   dealDelay = 0,
+  backKey,
 }: CardViewProps) {
   const style = { '--card-delay': `${dealDelay}ms` } as CSSProperties
+  const backClass = cosmeticClass('cosmetic-card-back', backKey)
   if (hidden || !card) {
     return (
       <div
-        className={`playing-card card-back${compact ? ' compact' : ''}${dealing ? ' is-dealing' : ''}`}
+        className={`playing-card card-back${backClass ? ` ${backClass}` : ''}${compact ? ' compact' : ''}${dealing ? ' is-dealing' : ''}`}
         style={style}
         aria-label="未公开的牌"
       >
@@ -62,7 +66,7 @@ export function CardView({
       aria-label={revealed ? `${rankLabels[card.rank]} ${suitLabels[card.suit]}` : '未翻开的手牌'}
     >
       <div className="playing-card-inner">
-        <div className="playing-card-face card-back"><span>XP</span></div>
+        <div className={`playing-card-face card-back${backClass ? ` ${backClass}` : ''}`}><span>XP</span></div>
         <div className={`playing-card-face card-front${red ? ' red' : ''}`}>
           <span className="card-rank">{rankLabels[card.rank]}</span>
           <span className="card-suit">{suitLabels[card.suit]}</span>

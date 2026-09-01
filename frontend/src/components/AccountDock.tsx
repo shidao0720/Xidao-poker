@@ -1,14 +1,31 @@
 import { Link } from 'react-router-dom'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAccountStore } from '../store/accountStore'
 import { AvatarView } from './AvatarView'
+import { accountApi } from '../api/account'
+import { cosmeticClass, cosmeticLabel } from '../utils/cosmetics'
 
 export function AccountDock() {
   const { profile, checkIn, error, clearError } = useAccountStore()
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [unreadMail, setUnreadMail] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const inbox = await accountApi.inbox()
+        if (!cancelled) setUnreadMail(inbox.unreadCount)
+      } catch { /* Account errors remain handled by authenticated pages. */ }
+    }
+    void load()
+    const timer = window.setInterval(() => void load(), 15_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [])
 
   if (!profile) return null
+  const title = cosmeticLabel(profile.loadout.title)
 
   async function dailyCheckIn() {
     setBusy(true)
@@ -25,10 +42,16 @@ export function AccountDock() {
   return (
     <>
       <div className="account-dock">
+        <Link className="mail-dock-button" to="/mail" aria-label={`邮件中心，${unreadMail} 封未读邮件`}>
+          <span aria-hidden="true">✉</span>{unreadMail > 0 && <b>{unreadMail > 99 ? '99+' : unreadMail}</b>}
+        </Link>
         <Link className="account-name" to="/profile" aria-label="打开个人主页">
-          <AvatarView className="account-avatar" avatarKey={profile.avatarKey} name={profile.gameId} />
+          <span className={`account-avatar-cosmetic ${cosmeticClass('cosmetic-avatar-frame', profile.loadout.avatarFrame)}`}>
+            <AvatarView className="account-avatar" avatarKey={profile.avatarKey} name={profile.gameId} />
+          </span>
           <span className="account-status"><i /> ONLINE · LAN</span>
           <strong>{profile.gameId}</strong>
+          {title && <small className={cosmeticClass('cosmetic-title', profile.loadout.title)}>{title}</small>}
         </Link>
         <div className="currency-pill chip-currency"><small>筹码</small><b>{profile.wallet.chips.toLocaleString()}</b></div>
         <div className="currency-pill crystal-currency"><small>英魂结晶</small><b>{profile.wallet.spiritCrystals.toLocaleString()}</b></div>

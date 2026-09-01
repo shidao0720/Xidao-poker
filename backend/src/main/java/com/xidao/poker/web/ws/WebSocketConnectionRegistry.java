@@ -61,6 +61,7 @@ public final class WebSocketConnectionRegistry {
                         request.playerId(),
                         previous.playerName(),
                         previous.avatarKey(),
+                        previous.cosmetics(),
                         session.getId(),
                         Math.incrementExact(previous.epoch()),
                         nextToken(),
@@ -78,6 +79,7 @@ public final class WebSocketConnectionRegistry {
                         request.playerId(),
                         request.playerName(),
                         request.avatarKey(),
+                        request.cosmetics(),
                         session.getId(),
                         1,
                         nextToken(),
@@ -326,6 +328,7 @@ public final class WebSocketConnectionRegistry {
     record MemberTicket(
             String playerName,
             String avatarKey,
+            java.util.Map<String, String> cosmetics,
             String connectionId,
             long epoch,
             String resumeToken
@@ -334,6 +337,7 @@ public final class WebSocketConnectionRegistry {
             return new MemberTicket(
                 identity.playerName(),
                 identity.avatarKey(),
+                identity.cosmetics(),
                 identity.connectionId(),
                     identity.connectionEpoch(),
                     identity.resumeToken()

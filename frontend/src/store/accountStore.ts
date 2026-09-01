@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { accountApi, type AccountProfile, type IdentityInput, type RuntimeCapabilities } from '../api/account'
+import { accountApi, type AccountProfile, type CosmeticSlot, type IdentityInput, type RedemptionResult, type RuntimeCapabilities, type StorePurchaseResult } from '../api/account'
 import { applyAccountIdentity } from '../utils/identity'
 import { createRandomId } from '../utils/randomId'
 import type { AvatarKey } from '../components/AvatarView'
@@ -17,6 +17,9 @@ interface AccountState {
   checkIn: () => Promise<boolean>
   exchange: (chips: number) => Promise<void>
   updateAvatar: (avatarKey: AvatarKey) => Promise<void>
+  redeem: (code: string) => Promise<RedemptionResult>
+  purchaseStoreItem: (itemKey: string) => Promise<StorePurchaseResult>
+  equipCosmetic: (slot: CosmeticSlot, itemKey: string | null) => Promise<void>
   clearError: () => void
 }
 
@@ -95,6 +98,42 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     try {
       const profile = await accountApi.updateAvatar(avatarKey)
       applyAccountIdentity(profile.gameId)
+      set({ profile, error: null })
+    } catch (error) {
+      set({ error: message(error) })
+      throw error
+    }
+  },
+
+  redeem: async (code) => {
+    try {
+      const result = await accountApi.redeem(createRandomId('redeem_'), code)
+      const profile = get().profile
+      if (profile) set({ profile: { ...profile, wallet: result.wallet }, error: null })
+      return result
+    } catch (error) {
+      set({ error: message(error) })
+      throw error
+    }
+  },
+
+  purchaseStoreItem: async (itemKey) => {
+    try {
+      const result = await accountApi.purchaseStoreItem(createRandomId('store_'), itemKey)
+      const profile = get().profile
+      if (profile) {
+        set({ profile: { ...profile, wallet: result.wallet, cosmetics: result.cosmetics, loadout: result.loadout }, error: null })
+      }
+      return result
+    } catch (error) {
+      set({ error: message(error) })
+      throw error
+    }
+  },
+
+  equipCosmetic: async (slot, itemKey) => {
+    try {
+      const profile = await accountApi.equipCosmetic(slot, createRandomId('equip_'), itemKey)
       set({ profile, error: null })
     } catch (error) {
       set({ error: message(error) })

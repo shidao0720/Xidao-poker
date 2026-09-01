@@ -1,6 +1,7 @@
 package com.xidao.poker.web.ws;
 
 import java.util.UUID;
+import java.util.Map;
 
 /** resumeToken 不参与 toString，避免日志意外泄露重连凭据。 */
 public final class SocketIdentity {
@@ -8,6 +9,7 @@ public final class SocketIdentity {
     private final String playerId;
     private final String playerName;
     private final String avatarKey;
+    private final Map<String, String> cosmetics;
     private final String connectionId;
     private final long connectionEpoch;
     private final String resumeToken;
@@ -18,6 +20,7 @@ public final class SocketIdentity {
             String playerId,
             String playerName,
             String avatarKey,
+            Map<String, String> cosmetics,
             String connectionId,
             long connectionEpoch,
             String resumeToken,
@@ -27,6 +30,7 @@ public final class SocketIdentity {
         this.playerId = playerId;
         this.playerName = playerName;
         this.avatarKey = avatarKey == null || avatarKey.isBlank() ? "default" : avatarKey;
+        this.cosmetics = cosmetics == null ? Map.of() : Map.copyOf(cosmetics);
         this.connectionId = connectionId;
         this.connectionEpoch = connectionEpoch;
         this.resumeToken = resumeToken;
@@ -37,7 +41,7 @@ public final class SocketIdentity {
             String roomId, String playerId, String playerName, String connectionId,
             long connectionEpoch, String resumeToken
     ) {
-        this(roomId, playerId, playerName, "default", connectionId, connectionEpoch, resumeToken, null);
+        this(roomId, playerId, playerName, "default", Map.of(), connectionId, connectionEpoch, resumeToken, null);
     }
 
     public String roomId() { return roomId; }
@@ -47,6 +51,8 @@ public final class SocketIdentity {
     public String playerName() { return playerName; }
 
     public String avatarKey() { return avatarKey; }
+
+    public Map<String, String> cosmetics() { return cosmetics; }
 
     public String connectionId() { return connectionId; }
 

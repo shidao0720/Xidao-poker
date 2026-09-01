@@ -8,6 +8,7 @@ public record AccountRow(
         String passwordHash,
         String primaryGameId,
         String avatarKey,
+        boolean admin,
         long chipBalance,
         long crystalBalance
 ) { }

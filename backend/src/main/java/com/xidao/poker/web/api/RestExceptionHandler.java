@@ -21,8 +21,14 @@ public class RestExceptionHandler {
     public ResponseEntity<ApiError> accountError(AccountException error) {
         HttpStatus status = switch (error.code()) {
             case INVALID_CREDENTIALS, UNAUTHORIZED -> HttpStatus.UNAUTHORIZED;
-            case GAME_ID_TAKEN, INSUFFICIENT_CHIPS, ALREADY_AT_TABLE -> HttpStatus.CONFLICT;
-            case INVALID_EXCHANGE -> HttpStatus.BAD_REQUEST;
+            case GAME_ID_TAKEN, INSUFFICIENT_CHIPS, ALREADY_AT_TABLE,
+                 REDEMPTION_ALREADY_USED, COSMETIC_ALREADY_OWNED,
+                 INSUFFICIENT_CRYSTALS, STORE_REQUEST_CONFLICT -> HttpStatus.CONFLICT;
+            case INVALID_EXCHANGE, INVALID_REDEMPTION_CODE, INVALID_MAIL,
+                 INVALID_COSMETIC -> HttpStatus.BAD_REQUEST;
+            case REDEMPTION_UNAVAILABLE -> HttpStatus.GONE;
+            case TABLE_RESULT_NOT_FOUND, MAIL_NOT_FOUND, COSMETIC_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
         };
         return error(status, error.code().name(), error.getMessage());
     }

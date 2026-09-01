@@ -39,3 +39,4 @@ assets/
 | `assets/images/ui/fate-stay-poker-logo.png` | B 主题标题 Logo | shidao0720 提供 | 项目自有素材 |
 | `assets/images/ui/fate-stay-poker-logo-source.png` | Logo 原始黑底源文件 | shidao0720 提供 | 项目自有素材 |
 | `assets/images/avatars/*` | 账户和牌桌预置头像（SVG/JPG） | Xidao Poker | 项目自有素材 |
+| `assets/audio/music/gate-of-steiner.mp4` | 除牌桌外页面的循环背景音乐 | shidao0720 提供 | 发布至公开仓库前需确认再分发授权 |

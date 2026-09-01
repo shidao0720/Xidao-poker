@@ -1,6 +1,7 @@
 import { useLayoutEffect, useState, type CSSProperties } from 'react'
 import type { GamePhase, GameSnapshot, HandCategory } from '../types/protocol'
 import { CardView } from './CardView'
+import { cosmeticClass } from '../utils/cosmetics'
 
 function particleStyle(index: number, count: number, prefix: 'allin' | 'result') {
   const angle = (index / count) * Math.PI * 2 + (index % 3) * 0.11
@@ -29,14 +30,16 @@ export function AllInBroadcast({
   visible,
   amount,
   onDismiss,
+  effectKey,
 }: {
   visible: boolean
   amount: number
   onDismiss: () => void
+  effectKey?: string | null | undefined
 }) {
   return (
     <section
-      className={`allin-broadcast${visible ? ' is-visible' : ''}`}
+      className={`allin-broadcast${visible ? ' is-visible' : ''} ${cosmeticClass('button-effect', effectKey)}`}
       aria-hidden={!visible}
       onClick={visible ? onDismiss : undefined}
     >
@@ -98,12 +101,12 @@ export function SettlementOverlay({ snapshot, playerId, visible, onClose }: Sett
   const personalWinnings = winnings.get(playerId) ?? 0
   const personalDelta = personalWinnings - (self?.totalContribution ?? 0)
   const outcome = personalDelta > 0 ? 'win' : personalDelta < 0 ? 'lose' : 'neutral'
-  const title = outcome === 'win' ? 'FATE CLAIMED' : outcome === 'lose' ? 'FATE DENIED' : 'FATE UNBOUND'
+  const title = outcome === 'win' ? 'Victory' : outcome === 'lose' ? 'Defeat' : 'FATE UNBOUND'
   const deltaLabel = `${personalDelta > 0 ? '+' : ''}${personalDelta.toLocaleString()}`
 
   return (
     <section
-      className={`settlement-overlay${visible ? ' is-visible' : ''}`}
+      className={`settlement-overlay${visible ? ' is-visible' : ''} ${cosmeticClass('victory-effect', primaryWinner?.cosmetics?.victoryEffect)}`}
       data-outcome={outcome}
       aria-hidden={!visible}
     >

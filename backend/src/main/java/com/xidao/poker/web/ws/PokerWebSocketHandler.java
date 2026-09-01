@@ -134,6 +134,7 @@ public final class PokerWebSocketHandler extends TextWebSocketHandler {
                         identity.playerId(),
                         identity.playerName(),
                         identity.avatarKey(),
+                        identity.cosmetics(),
                         identity.connectionId()
                 );
             }

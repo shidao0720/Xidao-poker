@@ -6,8 +6,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-
 @RestController
 @ConditionalOnProperty(prefix = "poker.persistence", name = "enabled", havingValue = "true")
 public class AccountController {
@@ -39,9 +37,63 @@ public class AccountController {
                 SessionCookie.require(servletRequest), request.requestId(), request.chips());
     }
 
+    @PostMapping("/api/account/redeem")
+    public RedemptionResult redeem(HttpServletRequest servletRequest,
+                                   @Valid @RequestBody RedemptionRequest request) {
+        return accounts.redeemCode(
+                SessionCookie.require(servletRequest), request.requestId(), request.code());
+    }
+
+    @GetMapping("/api/account/table-result")
+    public TableSessionResult tableResult(HttpServletRequest servletRequest,
+                                          @RequestParam String roomId) {
+        return accounts.tableSessionResult(SessionCookie.require(servletRequest), roomId);
+    }
+
+    @GetMapping("/api/account/mail")
+    public MailInbox inbox(HttpServletRequest request) {
+        return accounts.inbox(SessionCookie.require(request));
+    }
+
+    @PutMapping("/api/account/mail/{mailId}/read")
+    public MailItem markRead(HttpServletRequest request, @PathVariable java.util.UUID mailId) {
+        return accounts.markMailRead(SessionCookie.require(request), mailId);
+    }
+
+    @PostMapping("/api/account/mail/{mailId}/claim")
+    public MailClaimResult claim(HttpServletRequest servletRequest, @PathVariable java.util.UUID mailId,
+                                 @Valid @RequestBody CheckInRequest request) {
+        return accounts.claimMail(SessionCookie.require(servletRequest), mailId, request.requestId());
+    }
+
+    @PostMapping("/api/admin/mail/broadcast")
+    public MailItem broadcast(HttpServletRequest servletRequest,
+                              @Valid @RequestBody BroadcastMailRequest request) {
+        return accounts.broadcastMail(SessionCookie.require(servletRequest), request.requestId(),
+                new BroadcastMailCommand(request.type(), request.subject(), request.body(),
+                        request.rewardChips(), request.rewardCrystals(), request.rewardSkinKey()));
+    }
+
+    @GetMapping("/api/store/catalog")
+    public java.util.List<StoreItem> storeCatalog(HttpServletRequest request) {
+        return accounts.storeCatalog(SessionCookie.require(request));
+    }
+
+    @PostMapping("/api/store/purchase")
+    public StorePurchaseResult purchase(HttpServletRequest servletRequest,
+                                        @Valid @RequestBody StorePurchaseRequest request) {
+        return accounts.purchaseCosmetic(SessionCookie.require(servletRequest),
+                request.requestId(), request.itemKey());
+    }
+
+    @PutMapping("/api/account/loadout/{slot}")
+    public AccountProfile equip(HttpServletRequest servletRequest, @PathVariable String slot,
+                                @Valid @RequestBody CosmeticEquipRequest request) {
+        return accounts.equipCosmetic(SessionCookie.require(servletRequest), request.requestId(),
+                CosmeticSlot.fromApi(slot), request.itemKey());
+    }
+
     @GetMapping("/api/leaderboards")
     public Leaderboards leaderboards() { return accounts.leaderboards(); }
 
-    @GetMapping("/api/shop/items")
-    public List<Object> shopItems() { return List.of(); }
 }

@@ -3,9 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import { roomApi } from '../api/rooms'
 import { LobbySignalField } from '../components/LobbySignalField'
 import { SiteHeader } from '../components/SiteHeader'
+import { accountApi } from '../api/account'
 import { useAccountStore } from '../store/accountStore'
 import type { CreateRoomInput, GamePhase, RoomSummary } from '../types/protocol'
 import { getPlayerName, savePlayerName } from '../utils/identity'
+import {
+  clearPendingTableResult,
+  pendingTableResult,
+  takeTableResult,
+  type TableResultNotice,
+} from '../utils/tableExit'
 
 const phaseLabels: Record<GamePhase, string> = {
   WAITING: '等待加入',
@@ -21,7 +28,7 @@ const phaseLabels: Record<GamePhase, string> = {
 }
 
 const initialForm: CreateRoomInput = {
-  roomName: '周末牌局',
+  roomName: '自定义牌局',
   smallBlind: 5,
   bigBlind: 10,
   buyIn: 1000,
@@ -35,6 +42,8 @@ export function LobbyPage() {
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [tableResult, setTableResult] = useState<TableResultNotice | null>(() => takeTableResult())
+  const [settlementPending, setSettlementPending] = useState(false)
   const { mode, profile, bootstrap } = useAccountStore()
   const accountMode = mode === 'authenticated' && profile !== null
 
@@ -56,6 +65,41 @@ export function LobbyPage() {
     const timer = window.setInterval(() => void loadRooms(true), 3_000)
     return () => window.clearInterval(timer)
   }, [accountMode, bootstrap, loadRooms])
+
+  useEffect(() => {
+    const pending = pendingTableResult()
+    if (!accountMode || !pending) return
+    let cancelled = false
+    let timer: number | null = null
+
+    const poll = async () => {
+      try {
+        const result = await accountApi.tableResult(pending.roomId)
+        if (cancelled) return
+        if (result.status === 'SETTLED' && result.netChips !== null && result.returnedChips !== null) {
+          clearPendingTableResult()
+          setSettlementPending(false)
+          setTableResult({
+            netChips: result.netChips,
+            buyIn: result.buyIn,
+            returnedChips: result.returnedChips,
+          })
+          await bootstrap()
+          return
+        }
+        setSettlementPending(true)
+      } catch (caught) {
+        const status = (caught as Error & { status?: number }).status
+        if (status !== 404 && !cancelled) setError(caught instanceof Error ? caught.message : '无法读取离桌结算')
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 1_500)
+    }
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [accountMode, bootstrap])
 
   function enterRoom(roomId: string) {
     try {
@@ -95,6 +139,16 @@ export function LobbyPage() {
       </section>
 
       {error && <div className="alert" role="alert"><span>!</span>{error}<button onClick={() => setError(null)}>关闭</button></div>}
+      {settlementPending && <div className="table-result-pending">离桌结算处理中…</div>}
+      {tableResult && (
+        <section className={`table-result-dialog${tableResult.netChips > 0 ? ' is-win' : tableResult.netChips < 0 ? ' is-loss' : ' is-even'}`} role="dialog" aria-modal="true" aria-label="本局结算">
+          <button className="table-result-close" aria-label="关闭" onClick={() => setTableResult(null)}>×</button>
+          <small>TABLE SESSION RESULT</small>
+          <h2>{tableResult.netChips > 0 ? '本局获胜' : tableResult.netChips < 0 ? '本局失利' : '本局持平'}</h2>
+          <strong>{tableResult.netChips > 0 ? '+' : ''}{tableResult.netChips.toLocaleString()} 筹码</strong>
+          <p>带入 {tableResult.buyIn.toLocaleString()} · 带回 {tableResult.returnedChips.toLocaleString()}</p>
+        </section>
+      )}
 
       <div className="lobby-grid">
         <section className="room-section">

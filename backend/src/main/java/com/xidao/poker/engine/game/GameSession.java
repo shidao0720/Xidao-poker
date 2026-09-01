@@ -61,10 +61,15 @@ public final class GameSession {
     }
 
     public synchronized List<GameEvent> addPlayer(String playerId, String name, String avatarKey) {
+        return addPlayer(playerId, name, avatarKey, Map.of());
+    }
+
+    public synchronized List<GameEvent> addPlayer(String playerId, String name, String avatarKey,
+                                                   Map<String, String> cosmetics) {
         if (playersById.containsKey(playerId)) throw new IllegalArgumentException("player already joined");
         if (playersById.size() >= config.maxPlayers()) throw new IllegalStateException("room is full");
         int seat = firstFreeSeat();
-        Player player = new Player(playerId, name, seat, config.buyIn(), avatarKey);
+        Player player = new Player(playerId, name, seat, config.buyIn(), avatarKey, cosmetics);
         if (handInProgress()) player.becomeSpectator();
         playersById.put(playerId, player);
         boolean inHand = handInProgress() && currentHand.containsPlayer(player.id()) && player.isInHand();
@@ -72,6 +77,7 @@ public final class GameSession {
         raw.add(GameEvent.of(GameEventType.PLAYER_JOINED, currentHandId(), playerId, Map.ofEntries(
                 Map.entry("name", name),
                 Map.entry("avatarKey", player.avatarKey()),
+                Map.entry("cosmetics", player.cosmetics()),
                 Map.entry("seat", seat),
                 Map.entry("stack", player.stack()),
                 Map.entry("streetBet", player.streetBet()),
@@ -255,7 +261,8 @@ public final class GameSession {
                         handInProgress() && currentHand.containsPlayer(player.id()) && player.canAct(),
                         player.ready(),
                         currentHand == null ? List.of() : currentHand.visibleHoleCards(viewerId, player.id()),
-                        player.avatarKey()
+                        player.avatarKey(),
+                        player.cosmetics()
                 ))
                 .toList();
 

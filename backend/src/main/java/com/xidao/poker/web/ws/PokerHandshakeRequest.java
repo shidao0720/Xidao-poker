@@ -3,6 +3,7 @@ package com.xidao.poker.web.ws;
 import com.xidao.poker.web.protocol.ProtocolCompatibility;
 
 import java.util.UUID;
+import java.util.Map;
 
 /** 握手完成后写入 WebSocket attributes，消息处理阶段不再读取可伪造的身份字段。 */
 record PokerHandshakeRequest(
@@ -10,6 +11,7 @@ record PokerHandshakeRequest(
         String playerId,
         String playerName,
         String avatarKey,
+        Map<String, String> cosmetics,
         Long expectedConnectionEpoch,
         String resumeToken,
         int protocolVersion,
@@ -25,7 +27,7 @@ record PokerHandshakeRequest(
             int protocolVersion,
             String buildVersion
     ) {
-        this(roomId, playerId, playerName, "default", expectedConnectionEpoch, resumeToken,
+        this(roomId, playerId, playerName, "default", Map.of(), expectedConnectionEpoch, resumeToken,
                 protocolVersion, buildVersion, null);
     }
 
@@ -41,6 +43,7 @@ record PokerHandshakeRequest(
                 playerId,
                 playerName,
                 "default",
+                Map.of(),
                 expectedConnectionEpoch,
                 resumeToken,
                 ProtocolCompatibility.CURRENT_PROTOCOL_VERSION,

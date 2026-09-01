@@ -71,7 +71,7 @@ describe('SettlementOverlay', () => {
       <SettlementOverlay snapshot={settledSnapshot()} playerId="winner" visible onClose={vi.fn()} />,
     )
 
-    expect(screen.getByRole('heading', { name: 'FATE CLAIMED' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Victory' })).toBeTruthy()
     expect(screen.getByText('+15')).toBeTruthy()
     expect(screen.getByText('一对')).toBeTruthy()
     expect(view.container.querySelectorAll('.winner-combination-card')).toHaveLength(5)
@@ -79,6 +79,17 @@ describe('SettlementOverlay', () => {
     expect(screen.getAllByText('公共牌')).toHaveLength(3)
     expect(view.container.querySelectorAll('.result-atmosphere > i')).toHaveLength(28)
     expect(view.container.querySelector('.settlement-overlay.is-visible')).toBeTruthy()
+  })
+
+  it('uses the winner victory effect from the authoritative player snapshot', () => {
+    const snapshot = settledSnapshot()
+    snapshot.players[0]!.cosmetics = { victoryEffect: 'avalon' }
+
+    const view = render(
+      <SettlementOverlay snapshot={snapshot} playerId="winner" visible onClose={vi.fn()} />,
+    )
+
+    expect(view.container.querySelector('.settlement-overlay.victory-effect-avalon')).toBeTruthy()
   })
 
   it('keeps rendering a settlement received from an older backend without revealedHands', () => {
@@ -89,7 +100,7 @@ describe('SettlementOverlay', () => {
       <SettlementOverlay snapshot={legacySnapshot} playerId="winner" visible onClose={vi.fn()} />,
     )
 
-    expect(screen.getByRole('heading', { name: 'FATE CLAIMED' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Victory' })).toBeTruthy()
     expect(screen.getByText('未摊牌获胜')).toBeTruthy()
   })
 

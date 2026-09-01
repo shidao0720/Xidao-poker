@@ -5,6 +5,7 @@ import com.xidao.poker.engine.card.Card;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -15,6 +16,7 @@ public final class Player {
     private final String id;
     private final String name;
     private final String avatarKey;
+    private final Map<String, String> cosmetics;
     private final int seat;
     private final List<Card> holeCards = new ArrayList<>(2);
     private int stack;
@@ -27,10 +29,15 @@ public final class Player {
     private HandStatus handStatus;
 
     public Player(String id, String name, int seat, int stack) {
-        this(id, name, seat, stack, DEFAULT_AVATAR_KEY);
+        this(id, name, seat, stack, DEFAULT_AVATAR_KEY, Map.of());
     }
 
     public Player(String id, String name, int seat, int stack, String avatarKey) {
+        this(id, name, seat, stack, avatarKey, Map.of());
+    }
+
+    public Player(String id, String name, int seat, int stack, String avatarKey,
+                  Map<String, String> cosmetics) {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("player id is required");
         if (name == null || name.isBlank()) throw new IllegalArgumentException("player name is required");
         if (seat < 0 || seat > 9) throw new IllegalArgumentException("seat must be between 0 and 9");
@@ -38,6 +45,7 @@ public final class Player {
         this.id = id;
         this.name = name;
         this.avatarKey = avatarKey == null || avatarKey.isBlank() ? DEFAULT_AVATAR_KEY : avatarKey;
+        this.cosmetics = cosmetics == null ? Map.of() : Map.copyOf(cosmetics);
         this.seat = seat;
         this.stack = stack;
         this.connectionStatus = ConnectionStatus.CONNECTED;
@@ -95,6 +103,7 @@ public final class Player {
     public String id() { return id; }
     public String name() { return name; }
     public String avatarKey() { return avatarKey; }
+    public Map<String, String> cosmetics() { return cosmetics; }
     public int seat() { return seat; }
     public int stack() { return stack; }
     public int streetBet() { return streetBet; }

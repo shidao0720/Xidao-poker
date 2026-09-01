@@ -155,6 +155,17 @@ public final class RoomRuntime {
             String avatarKey,
             String connectionId
     ) {
+        return join(commandId, playerId, playerName, avatarKey, Map.of(), connectionId);
+    }
+
+    RoomExecutionResult join(
+            String commandId,
+            String playerId,
+            String playerName,
+            String avatarKey,
+            Map<String, String> cosmetics,
+            String connectionId
+    ) {
         lock.lock();
         try {
             requireOpen();
@@ -174,7 +185,7 @@ public final class RoomRuntime {
                 );
             }
             MemberConnection connection = new MemberConnection(connectionId, 1, ConnectionState.CONNECTED);
-            List<GameEvent> events = gameSession.addPlayer(playerId, playerName, avatarKey);
+            List<GameEvent> events = gameSession.addPlayer(playerId, playerName, avatarKey, cosmetics);
             connections.put(playerId, connection);
             return complete(key, events, Set.of(playerId), false, connection.epoch(), false);
         } finally {
