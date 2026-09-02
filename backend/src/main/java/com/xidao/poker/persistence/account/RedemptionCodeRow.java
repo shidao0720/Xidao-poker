@@ -10,5 +10,6 @@ public record RedemptionCodeRow(
         int redeemedCount,
         Instant validFrom,
         Instant validUntil,
-        boolean enabled
+        boolean enabled,
+        Instant createdAt
 ) { }

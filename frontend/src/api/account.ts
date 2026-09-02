@@ -123,6 +123,76 @@ export interface BroadcastMailInput {
   rewardSkinKey: string
 }
 
+export interface AdminOverview {
+  accounts: number
+  administrators: number
+  enabledRedemptionCodes: number
+  redemptionClaims: number
+  mailMessages: number
+  deliveredMail: number
+  grantedCosmetics: number
+}
+
+export interface AdminRedemptionCode {
+  codeHash: string
+  currency: 'CHIP' | 'CRYSTAL'
+  rewardAmount: number
+  maxRedemptions: number | null
+  redeemedCount: number
+  validFrom: string
+  validUntil: string | null
+  enabled: boolean
+  createdAt: string
+}
+
+export interface CreateRedemptionCodeInput {
+  code: string
+  currency: 'CHIP' | 'CRYSTAL'
+  rewardAmount: number
+  maxRedemptions: number | null
+  validFrom: string | null
+  validUntil: string | null
+}
+
+export interface AdminRedemptionCodeCreated {
+  code: string
+  redemptionCode: AdminRedemptionCode
+}
+
+export interface FriendView {
+  friendshipId: string
+  gameId: string
+  avatarKey: AvatarKey
+  online: boolean
+}
+export interface FriendDashboard {
+  friends: FriendView[]
+  incomingRequests: FriendView[]
+  outgoingRequests: FriendView[]
+}
+
+export interface AdminAccountView {
+  accountId: string
+  realName: string
+  primaryGameId: string
+  gameIds: string[]
+  avatarKey: AvatarKey
+  administrator: boolean
+  wallet: WalletSnapshot
+  online: boolean
+  passwordStatus: 'BCRYPT_PROTECTED'
+}
+export interface AdminFriendshipView {
+  friendshipId: string
+  requesterAccountId: string
+  requesterGameId: string
+  addresseeAccountId: string
+  addresseeGameId: string
+  status: 'PENDING' | 'ACCEPTED'
+  updatedAt: string
+}
+export interface AdminWalletAdjustment { accountId: string; wallet: WalletSnapshot }
+
 export const accountApi = {
   runtime: () => apiRequest<RuntimeCapabilities>('/api/runtime'),
   me: () => apiRequest<AccountProfile>('/api/account/me'),
@@ -139,6 +209,9 @@ export const accountApi = {
     body: JSON.stringify(input),
   }),
   logout: () => apiRequest<void>('/api/auth/logout', { method: 'POST' }),
+  heartbeat: (requestId: string) => apiRequest<void>('/api/friends/heartbeat', {
+    method: 'POST', body: JSON.stringify({ requestId }),
+  }),
   checkIn: (requestId: string) => apiRequest<CheckInResult>('/api/account/check-in', {
     method: 'POST',
     body: JSON.stringify({ requestId }),
@@ -161,6 +234,42 @@ export const accountApi = {
   }),
   broadcastMail: (requestId: string, input: BroadcastMailInput) => apiRequest<MailItem>('/api/admin/mail/broadcast', {
     method: 'POST', body: JSON.stringify({ ...input, rewardSkinKey: input.rewardSkinKey || null, requestId }),
+  }),
+  adminOverview: () => apiRequest<AdminOverview>('/api/admin/overview'),
+  adminRedemptionCodes: () => apiRequest<AdminRedemptionCode[]>('/api/admin/redemption-codes'),
+  createRedemptionCode: (requestId: string, input: CreateRedemptionCodeInput) => apiRequest<AdminRedemptionCodeCreated>('/api/admin/redemption-codes', {
+    method: 'POST', body: JSON.stringify({ ...input, requestId }),
+  }),
+  setRedemptionCodeEnabled: (codeHash: string, requestId: string, enabled: boolean) => apiRequest<AdminRedemptionCode>(
+    `/api/admin/redemption-codes/${encodeURIComponent(codeHash)}/enabled`,
+    { method: 'PUT', body: JSON.stringify({ requestId, enabled }) },
+  ),
+  friends: () => apiRequest<FriendDashboard>('/api/friends'),
+  sendFriendRequest: (gameId: string, requestId: string) => apiRequest<FriendDashboard>('/api/friends/requests', {
+    method: 'POST', body: JSON.stringify({ gameId, requestId }),
+  }),
+  acceptFriendRequest: (friendshipId: string, requestId: string) => apiRequest<FriendDashboard>(`/api/friends/${encodeURIComponent(friendshipId)}/accept`, {
+    method: 'POST', body: JSON.stringify({ requestId }),
+  }),
+  rejectFriendRequest: (friendshipId: string, requestId: string) => apiRequest<FriendDashboard>(`/api/friends/${encodeURIComponent(friendshipId)}/reject`, {
+    method: 'POST', body: JSON.stringify({ requestId }),
+  }),
+  removeFriend: (friendshipId: string, requestId: string) => apiRequest<FriendDashboard>(`/api/friends/${encodeURIComponent(friendshipId)}/remove`, {
+    method: 'POST', body: JSON.stringify({ requestId }),
+  }),
+  adminAccounts: () => apiRequest<AdminAccountView[]>('/api/admin/accounts'),
+  adminFriendships: () => apiRequest<AdminFriendshipView[]>('/api/admin/friendships'),
+  adjustAccountWallet: (accountId: string, requestId: string, chipDelta: number, crystalDelta: number, reason: string) => apiRequest<AdminWalletAdjustment>(`/api/admin/accounts/${encodeURIComponent(accountId)}/wallet-adjustments`, {
+    method: 'POST', body: JSON.stringify({ requestId, chipDelta, crystalDelta, reason }),
+  }),
+  resetAccountPassword: (accountId: string, requestId: string, newPassword: string) => apiRequest<void>(`/api/admin/accounts/${encodeURIComponent(accountId)}/password-reset`, {
+    method: 'POST', body: JSON.stringify({ requestId, newPassword }),
+  }),
+  createAdminFriendship: (firstAccountId: string, secondAccountId: string, requestId: string) => apiRequest<AdminFriendshipView>('/api/admin/friendships', {
+    method: 'POST', body: JSON.stringify({ firstAccountId, secondAccountId, requestId }),
+  }),
+  removeAdminFriendship: (friendshipId: string, requestId: string) => apiRequest<void>(`/api/admin/friendships/${encodeURIComponent(friendshipId)}/remove`, {
+    method: 'POST', body: JSON.stringify({ requestId }),
   }),
   storeCatalog: () => apiRequest<StoreItem[]>('/api/store/catalog'),
   purchaseStoreItem: (requestId: string, itemKey: string) => apiRequest<StorePurchaseResult>('/api/store/purchase', {

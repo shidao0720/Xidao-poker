@@ -6,8 +6,10 @@ import { getPlayerName, savePlayerName } from '../utils/identity'
 
 const navigation = [
   { to: '/play', label: 'PLAY' },
+  { to: '/arena', label: 'ARENA' },
   { to: '/leaderboard', label: 'LEADERBOARD' },
   { to: '/store', label: 'STORE' },
+  { to: '/friends', label: 'FRIENDS' },
 ]
 
 export function SiteHeader() {
@@ -27,6 +29,7 @@ export function SiteHeader() {
             {item.label}
           </NavLink>
         ))}
+        {profile?.admin && <NavLink to="/admin" className={({ isActive }) => isActive ? 'is-active admin-link' : 'admin-link'}>ADMIN</NavLink>}
       </nav>
       <div className="site-account">
         {mode === 'authenticated' && profile ? <AccountDock /> : (

@@ -10,13 +10,21 @@ import org.springframework.web.bind.annotation.PathVariable;
  */
 @Controller
 public class SpaForwardController {
-    @GetMapping({"/play", "/play/", "/leaderboard", "/leaderboard/", "/store", "/store/", "/profile", "/profile/"})
+    @GetMapping({"/play", "/play/", "/leaderboard", "/leaderboard/", "/store", "/store/",
+            "/profile", "/profile/", "/mail", "/mail/", "/friends", "/friends/",
+            "/admin", "/admin/",
+            "/arena", "/arena/"})
     public String portal() {
         return "forward:/index.html";
     }
 
     @GetMapping({"/rooms/{roomId:[A-Za-z0-9_-]+}", "/rooms/{roomId:[A-Za-z0-9_-]+}/"})
     public String room(@PathVariable String roomId) {
+        return "forward:/index.html";
+    }
+
+    @GetMapping({"/arena/{roomId:[A-Za-z0-9_-]+}", "/arena/{roomId:[A-Za-z0-9_-]+}/"})
+    public String arena(@PathVariable String roomId) {
         return "forward:/index.html";
     }
 }

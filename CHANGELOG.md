@@ -8,6 +8,20 @@
 
 ### Added
 
+- Added persistent friend requests, accept/reject/remove flows, and friend-only online presence backed by per-session heartbeats. Multi-device sessions are evaluated independently and presence expires after missed heartbeats.
+- Extended Operations with administrator account lookup, audited chip/crystal adjustments, BCrypt password reset with old-session revocation, and friendship graph creation/removal. Password plaintext and password hashes are never exposed to the UI or logs.
+- Added an administrator-only Operations page with live account/mail/cosmetic metrics, redemption-code creation and enable/disable controls, and catalog-backed global reward mail composition. Administrator mutations carry idempotent `requestId` values; redemption plaintext is returned once and only its SHA-256 digest is stored.
+
+- 添加第二个可游玩模式“逆相载具竞技”：原创 2D 反射迷宫、最多 10 人房间、准备/房主开局、载具驾驶、墙体与载具碰撞、反弹弹丸、单次命中淘汰和回合胜负结算。
+- 添加 1800×1080 双通路随机迷宫生成器，每轮重新生成 12×8 碎片化地图；生成算法拒绝单一咽喉点，保证所有出生区域之间至少存在两条内部独立路线，并按载具碰撞半径留出稳定通行净空。
+- 添加每 20 秒服务端随机技能投放：超载推进、快速射击和一次性灵子护盾；技能位置、拾取、持续时间和护盾命中均由服务端裁决。
+- 添加跟随玩家的战场摄像机、全图小地图、技能投放倒计时、地图技能标记和玩家生效状态反馈。
+- 添加纯 Java `ArenaSession`、串行 `ArenaRoomRuntime`、30 tick/s 服务端物理循环、`/api/arena/rooms` 房间目录和 `/ws/arena` 实时协议；输入只作为意图提交，命中与胜负均由服务端裁决。
+- 添加载具模式断线重连、连接 epoch 防陈旧、20 秒宽限、命令 `requestId` 与输入序号双重去重，以及等待重连成员阻止空房误清理的生命周期约束。
+- 添加 React 载具大厅、Canvas 战场、平滑插值、键盘/触屏控制、驾驶员计分板、观战、淘汰播报和晶体碎裂消散阵亡效果，并接入同端口 LAN 发布路径。
+- 添加载具连续回合：最后存活者由服务端立即累计胜场，取消 Victory 遮罩，在短暂淘汰转场后为至少两名在线玩家自动生成地图并开始下一轮。
+- 修复弹丸反射后同一物理帧仍沿用旧位移、连续重复碰墙并提前消失的问题；弹丸改为固定存在 5 秒，每名玩家最多同时发射 5 发，命中或消失后即时恢复弹药，首次墙面反射后允许自伤。
+- 添加载具引擎和房间运行时自动测试，覆盖十人容量、开局资格、弹丸淘汰、载具互撞、离开结算、重复命令、旧连接、清理 TTL 和 300 回合连续运行不变量。
 - 添加正式“Spirit Archive”商城：服务端提供 14 件权威商品目录，覆盖头像框、牌背、称号、局内按钮效果、结算演出和组合珍藏；“主页风格”分类暂时保留为空。
 - 添加真实英魂结晶购买、`requestId` 幂等防重复扣款、组合商品按缺失内容发放、已拥有校验，以及购买流水与装扮库存同事务提交。
 - 添加账户装扮栏与装备接口；头像框、牌背、称号、局内按钮效果和胜利演出会在服务端认证 WebSocket 时注入牌桌快照，客户端不能伪造未拥有外观。
@@ -113,6 +127,8 @@
 
 ### Fixed
 
+- 补充站点 favicon 配置，避免浏览器对缺失 `/favicon.ico` 的自动请求持续产生无关 404，干扰真实网络故障排查。
+- 修复已登录玩家使用中文或其他非 ASCII 游戏 ID 时，载具竞技 WebSocket 在读取服务端账户身份前错误返回 400 的问题；认证模式现完全以服务端账户资料为准。
 - 修复筹码粒子在直线位移中段因 `rotateY` 转到背面并被 `backface-visibility` 隐藏、看起来突然消失的问题；飞行旋转改为全程可见的平面旋转。
 - 修复前端热更新后仍连接旧后端进程时，旧版快照缺少 `revealedHands` 字段导致结算组件调用 `.find()` 白屏的问题；Snapshot 接收边界现会将缺失字段归一化为空列表，重启后端前也能安全降级展示。
 - 修复结算播报缺少赢家牌型、非赢家客户端偶尔收不到赢家手牌的问题；服务端现随摊牌/结算事件和查看者快照发送权威牌型、最佳五张牌及公开手牌，前端只负责展示。未发满五张公共牌便因弃牌结束时明确显示“未摊牌获胜”，不会伪造牌型。

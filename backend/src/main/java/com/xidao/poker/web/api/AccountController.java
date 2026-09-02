@@ -74,6 +74,80 @@ public class AccountController {
                         request.rewardChips(), request.rewardCrystals(), request.rewardSkinKey()));
     }
 
+    @GetMapping("/api/admin/overview")
+    public AdminOverview adminOverview(HttpServletRequest request) {
+        return accounts.adminOverview(SessionCookie.require(request));
+    }
+
+    @GetMapping("/api/admin/redemption-codes")
+    public java.util.List<AdminRedemptionCode> redemptionCodes(HttpServletRequest request) {
+        return accounts.adminRedemptionCodes(SessionCookie.require(request));
+    }
+
+    @PostMapping("/api/admin/redemption-codes")
+    public AdminRedemptionCodeCreated createRedemptionCode(
+            HttpServletRequest servletRequest,
+            @Valid @RequestBody CreateRedemptionCodeRequest request
+    ) {
+        return accounts.createRedemptionCode(SessionCookie.require(servletRequest), request.requestId(),
+                new CreateRedemptionCodeCommand(request.code(), request.currency(), request.rewardAmount(),
+                        request.maxRedemptions(), request.validFrom(), request.validUntil()));
+    }
+
+    @PutMapping("/api/admin/redemption-codes/{codeHash}/enabled")
+    public AdminRedemptionCode setRedemptionCodeEnabled(
+            HttpServletRequest servletRequest,
+            @PathVariable @jakarta.validation.constraints.Pattern(regexp = "[a-fA-F0-9]{64}") String codeHash,
+            @Valid @RequestBody RedemptionCodeEnabledRequest request
+    ) {
+        return accounts.setRedemptionCodeEnabled(SessionCookie.require(servletRequest),
+                request.requestId(), codeHash, request.enabled());
+    }
+
+    @GetMapping("/api/admin/accounts")
+    public java.util.List<AdminAccountView> adminAccounts(HttpServletRequest request) {
+        return accounts.adminAccounts(SessionCookie.require(request));
+    }
+
+    @GetMapping("/api/admin/friendships")
+    public java.util.List<AdminFriendshipView> adminFriendships(HttpServletRequest request) {
+        return accounts.adminFriendships(SessionCookie.require(request));
+    }
+
+    @PostMapping("/api/admin/accounts/{accountId}/wallet-adjustments")
+    public AdminWalletAdjustment adjustWallet(
+            HttpServletRequest request, @PathVariable java.util.UUID accountId,
+            @Valid @RequestBody AdminWalletAdjustmentRequest command
+    ) {
+        return accounts.adjustAccountWallet(SessionCookie.require(request), command.requestId(), accountId,
+                command.chipDelta(), command.crystalDelta(), command.reason());
+    }
+
+    @PostMapping("/api/admin/accounts/{accountId}/password-reset")
+    public void resetPassword(
+            HttpServletRequest request, @PathVariable java.util.UUID accountId,
+            @Valid @RequestBody AdminPasswordResetRequest command
+    ) {
+        accounts.resetAccountPassword(SessionCookie.require(request), command.requestId(),
+                accountId, command.newPassword());
+    }
+
+    @PostMapping("/api/admin/friendships")
+    public AdminFriendshipView createFriendship(
+            HttpServletRequest request, @Valid @RequestBody AdminFriendshipRequest command
+    ) {
+        return accounts.createAdminFriendship(SessionCookie.require(request), command.requestId(),
+                command.firstAccountId(), command.secondAccountId());
+    }
+
+    @PostMapping("/api/admin/friendships/{friendshipId}/remove")
+    public void removeFriendship(
+            HttpServletRequest request, @PathVariable java.util.UUID friendshipId,
+            @Valid @RequestBody CheckInRequest command
+    ) {
+        accounts.removeAdminFriendship(SessionCookie.require(request), command.requestId(), friendshipId);
+    }
+
     @GetMapping("/api/store/catalog")
     public java.util.List<StoreItem> storeCatalog(HttpServletRequest request) {
         return accounts.storeCatalog(SessionCookie.require(request));

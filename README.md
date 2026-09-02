@@ -1,10 +1,33 @@
-# Xidao Poker
+# Xidao LAN Game Hub
 
-一个面向局域网多人联机的无限注德州扑克（No-Limit Texas Hold'em）项目，目标支持最多 10 名玩家同时在线。
+一个面向局域网多人联机的浏览器游戏项目。德州扑克是首个完整模式，载具竞技是第二个可游玩模式；两个模式都以最多 10 名玩家、同端口部署和服务端权威为基础。
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 
-> 当前状态：局域网端到端 MVP 已可联机运行。游戏引擎、`RoomRuntime` 应用层、Spring HTTP / WebSocket 适配器、30 秒安全重连、服务端回合计时、PostgreSQL 手牌历史与账户钱包，以及 React 登录 / 大厅 / 牌桌界面均已落地。
+> 当前状态：局域网端到端 MVP 已可联机运行。德州扑克完整流程、账户与商城体系，以及第二模式“逆相载具竞技”的服务端物理、房间联机与 Canvas 客户端均已落地。
+
+## 载具竞技模式（Prototype 01）
+
+`/arena` 提供一套原创的简易 2D 反射迷宫载具玩法，用于验证未来多游戏 IP 的实时联机底座：
+
+```text
+竞技大厅创建/加入房间
+    → 最多 10 名驾驶员加入并准备
+    → 房主开始回合
+    → WASD / 方向键驾驶，Space 发射反弹弹丸
+    → 单次命中淘汰，最后幸存者胜场立即 +1
+    → 晶体消散与淘汰播报后，在线人数不少于 2 时自动生成地图并开始下一轮
+```
+
+- 移动、载具互撞、墙体碰撞、弹丸反射、命中和胜负全部由 Java 服务端以约 30 tick/s 裁决。
+- 每轮由服务端生成一张 1800×1080 的 12×8 碎片化随机迷宫；通道按载具碰撞半径预留安全净空，拓扑不存在单一咽喉点，保证任意出生区域之间至少有两条内部独立路线。
+- 每名玩家最多同时保有 5 发弹丸；弹丸命中目标或固定存在 5 秒后归还弹药。墙面反射不消耗弹药，首次反射后弹丸可伤害发射者。
+- Canvas 客户端使用跟随摄像机和平滑绘制，并提供全图小地图；触屏设备提供方向和开火按钮。
+- 回合开始后每隔 20 秒在安全可通行位置生成特殊技能：超载推进、快速射击或可抵挡一次命中的灵子护盾。
+- 中途加入者先观战，下一轮才参战；断线有 20 秒重连窗口，过期移除后不会让回合卡死。
+- 回合不显示 Victory 结算遮罩；3 秒清晰淘汰播报与转场后自动续局，在线人数不足 2 人时才返回准备阶段。
+- 每个房间通过独立公平锁串行处理加入、输入、Tick、断线、重连和离开；客户端命令带 `requestId`，输入另带单调序号。
+- 当前采用抽象蓝色矢量风格，角色、载具、地图主题、技能名称与世界观资源后续可在不改实时协议底座的前提下替换。
 
 ## 目标游戏流程
 
@@ -298,6 +321,22 @@ handId + turnId（行动命令）
 | `PUT` | `/api/account/mail/{mailId}/read` | 将本人邮件标记为已读 |
 | `POST` | `/api/account/mail/{mailId}/claim` | 幂等领取邮件中的筹码、结晶或皮肤附件 |
 | `POST` | `/api/admin/mail/broadcast` | 仅管理员可向所有现有账户群发公告、通知或奖励 |
+| `GET` | `/api/admin/overview` | 管理员运营数据概览 |
+| `GET` | `/api/admin/redemption-codes` | 管理员查看兑换码摘要、限额和状态（不返回明文） |
+| `POST` | `/api/admin/redemption-codes` | 管理员幂等创建兑换码，明文仅在创建响应中返回一次 |
+| `PUT` | `/api/admin/redemption-codes/{hash}/enabled` | 管理员幂等启用或停用兑换码 |
+| `GET` | `/api/friends` | 查看好友、收到与发出的好友申请以及好友在线状态 |
+| `POST` | `/api/friends/heartbeat` | 更新当前登录会话的服务端在线心跳 |
+| `POST` | `/api/friends/requests` | 按游戏 ID 发送好友申请 |
+| `POST` | `/api/friends/{id}/accept` | 接受本人收到的好友申请 |
+| `POST` | `/api/friends/{id}/reject` | 拒绝本人收到的好友申请 |
+| `POST` | `/api/friends/{id}/remove` | 删除本人的已接受好友关系 |
+| `GET` | `/api/admin/accounts` | 管理员查看账户身份、游戏 ID、在线状态与货币余额 |
+| `POST` | `/api/admin/accounts/{id}/wallet-adjustments` | 管理员按增减值和原因调整娱乐货币并写入流水与审计 |
+| `POST` | `/api/admin/accounts/{id}/password-reset` | 管理员重置密码并注销目标账户全部旧会话 |
+| `GET` | `/api/admin/friendships` | 管理员查看好友关系图 |
+| `POST` | `/api/admin/friendships` | 管理员建立好友关系或批准已有申请 |
+| `POST` | `/api/admin/friendships/{id}/remove` | 管理员解除好友关系 |
 | `POST` | `/api/account/redeem` | 幂等核销兑换码并把奖励写入钱包账本 |
 | `GET` | `/api/account/table-result?roomId=...` | 查询本人指定牌桌的托管结算与净输赢 |
 | `POST` | `/api/wallet/exchange` | 按 10:1 将筹码单向兑换为英魂结晶 |
@@ -479,7 +518,7 @@ npm run build
 
 前端状态同步测试重点锁定 Snapshot 整体替换、事件序号缺口、服务端行动投影，以及观察者/破产玩家不进入行动队列。测试数量会随开发持续增长，以本地验证和 CI 的实际结果为准。
 
-当前本地基线：后端共 140 项测试，非 Docker 环境执行的 134 项通过；另外 6 项 Testcontainers PostgreSQL 测试在 Docker Desktop 可用时执行，已覆盖真实迁移、身份约束、邮件、兑换码、双货币、牌桌托管、幂等和事务回滚；前端 32 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
+当前本地基线：后端 166 项测试通过，覆盖扑克规则、PostgreSQL 事务、HTTP/WebSocket、随机迷宫双通路、弹丸寿命/弹药/自伤、载具技能周期、自动续局与 300 回合连续运行不变量；前端 38 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
 
 ## Git 工作流
 

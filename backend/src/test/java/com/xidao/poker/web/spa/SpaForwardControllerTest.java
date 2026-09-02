@@ -20,7 +20,7 @@ class SpaForwardControllerTest {
 
     @Test
     void portalRoutesFallBackToSpaIndex() throws Exception {
-        for (String route : new String[]{"/play", "/leaderboard", "/store", "/profile"}) {
+        for (String route : new String[]{"/play", "/leaderboard", "/store", "/profile", "/friends", "/admin", "/arena", "/arena/arena_test"}) {
             mvc.perform(get(route))
                     .andExpect(status().isOk())
                     .andExpect(forwardedUrl("/index.html"));

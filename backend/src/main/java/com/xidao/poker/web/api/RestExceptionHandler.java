@@ -23,11 +23,15 @@ public class RestExceptionHandler {
             case INVALID_CREDENTIALS, UNAUTHORIZED -> HttpStatus.UNAUTHORIZED;
             case GAME_ID_TAKEN, INSUFFICIENT_CHIPS, ALREADY_AT_TABLE,
                  REDEMPTION_ALREADY_USED, COSMETIC_ALREADY_OWNED,
-                 INSUFFICIENT_CRYSTALS, STORE_REQUEST_CONFLICT -> HttpStatus.CONFLICT;
+                 INSUFFICIENT_CRYSTALS, STORE_REQUEST_CONFLICT,
+                 REDEMPTION_CODE_EXISTS, ADMIN_REQUEST_CONFLICT,
+                 FRIENDSHIP_EXISTS, FRIEND_REQUEST_CONFLICT -> HttpStatus.CONFLICT;
             case INVALID_EXCHANGE, INVALID_REDEMPTION_CODE, INVALID_MAIL,
-                 INVALID_COSMETIC -> HttpStatus.BAD_REQUEST;
+                 INVALID_COSMETIC, INVALID_FRIENDSHIP,
+                 INVALID_ADMIN_ADJUSTMENT -> HttpStatus.BAD_REQUEST;
             case REDEMPTION_UNAVAILABLE -> HttpStatus.GONE;
-            case TABLE_RESULT_NOT_FOUND, MAIL_NOT_FOUND, COSMETIC_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case TABLE_RESULT_NOT_FOUND, MAIL_NOT_FOUND, COSMETIC_NOT_FOUND,
+                 ACCOUNT_NOT_FOUND, FRIENDSHIP_NOT_FOUND -> HttpStatus.NOT_FOUND;
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
         };
         return error(status, error.code().name(), error.getMessage());

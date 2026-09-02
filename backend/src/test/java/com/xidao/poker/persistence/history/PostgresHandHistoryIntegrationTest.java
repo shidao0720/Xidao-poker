@@ -13,6 +13,7 @@ import com.xidao.poker.application.account.RedemptionResult;
 import com.xidao.poker.application.account.TableSessionResult;
 import com.xidao.poker.application.account.BroadcastMailCommand;
 import com.xidao.poker.application.account.CosmeticSlot;
+import com.xidao.poker.application.account.CreateRedemptionCodeCommand;
 import com.xidao.poker.web.lifecycle.TableSettlementListener;
 import com.xidao.poker.application.history.HandHistoryRepository;
 import com.xidao.poker.application.history.HandHistorySaveResult;
@@ -31,6 +32,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -190,7 +192,7 @@ class PostgresHandHistoryIntegrationTest {
 
         var sent = accounts.broadcastMail(account.sessionToken(), "broadcast-request-001",
                 new BroadcastMailCommand("REWARD", "维护奖励", "感谢参与本次测试。",
-                        500, 25, "saber-blue"));
+                        500, 25, "observer-frame"));
         var inbox = accounts.inbox(account.sessionToken());
         assertThat(inbox.unreadCount()).isPositive();
         assertThat(inbox.messages()).extracting("mailId").contains(sent.mailId());
@@ -200,7 +202,7 @@ class PostgresHandHistoryIntegrationTest {
                 account.sessionToken(), sent.mailId(), "mailclaim-request-001");
         assertThat(claimed.wallet()).isEqualTo(new WalletSnapshot(10_500, 25));
         assertThat(duplicateClaim.wallet()).isEqualTo(claimed.wallet());
-        assertThat(claimed.cosmetics()).contains("saber-blue");
+        assertThat(claimed.cosmetics()).contains("observer-frame");
 
         RedemptionResult redeemed = accounts.redeemCode(
                 account.sessionToken(), "redeem-request-001", "fate-stay-poker");
@@ -219,6 +221,98 @@ class PostgresHandHistoryIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM redemption_claim WHERE account_id = "
                 + "(SELECT account_id FROM poker_user WHERE player_id = 'mail_master')", Long.class))
                 .isEqualTo(1L);
+    }
+
+    @Test
+    void administratorCanManageRedemptionCodesWithIdempotentRequests() {
+        AuthResult account = accounts.register("Admin Test", "admin_codes", "correct-horse-7");
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        jdbc.update("UPDATE identity_account SET is_admin = TRUE WHERE account_id = "
+                + "(SELECT account_id FROM poker_user WHERE player_id = 'admin_codes')");
+
+        var created = accounts.createRedemptionCode(account.sessionToken(), "admin-code-request-001",
+                new CreateRedemptionCodeCommand("ADMIN-TEST-001", "CHIP", 250, 10,
+                        Instant.parse("2026-01-01T00:00:00Z"), null));
+        var repeated = accounts.createRedemptionCode(account.sessionToken(), "admin-code-request-001",
+                new CreateRedemptionCodeCommand("ADMIN-TEST-001", "CHIP", 250, 10,
+                        Instant.parse("2026-01-01T00:00:00Z"), null));
+
+        assertThat(repeated).isEqualTo(created);
+        assertThat(accounts.adminOverview(account.sessionToken()).accounts()).isPositive();
+        assertThat(accounts.adminRedemptionCodes(account.sessionToken()))
+                .extracting("codeHash").contains(created.redemptionCode().codeHash());
+        assertThat(accounts.setRedemptionCodeEnabled(account.sessionToken(), "admin-code-toggle-001",
+                created.redemptionCode().codeHash(), false).enabled()).isFalse();
+        assertThat(accounts.setRedemptionCodeEnabled(account.sessionToken(), "admin-code-toggle-001",
+                created.redemptionCode().codeHash(), false).enabled()).isFalse();
+    }
+
+    @Test
+    void friendRequestsAreMutualPersistentAndExposeServerPresence() {
+        AuthResult alice = accounts.register("Friend Alice", "friend_alice", "correct-horse-8");
+        AuthResult bob = accounts.register("Friend Bob", "friend_bob", "correct-horse-9");
+        accounts.heartbeat(alice.sessionToken(), "presence-alice-001");
+        accounts.heartbeat(bob.sessionToken(), "presence-bob-001");
+
+        var sent = accounts.sendFriendRequest(alice.sessionToken(), "friend-send-001", "friend_bob");
+        assertThat(sent.outgoingRequests()).extracting("gameId").containsExactly("friend_bob");
+        var incoming = accounts.friends(bob.sessionToken()).incomingRequests();
+        assertThat(incoming).extracting("gameId").containsExactly("friend_alice");
+
+        var accepted = accounts.acceptFriendRequest(bob.sessionToken(), "friend-accept-001",
+                incoming.getFirst().friendshipId());
+        assertThat(accepted.friends()).extracting("gameId").containsExactly("friend_alice");
+        assertThat(accounts.friends(alice.sessionToken()).friends().getFirst().online()).isTrue();
+
+        var removed = accounts.removeFriend(alice.sessionToken(), "friend-remove-001",
+                accepted.friends().getFirst().friendshipId());
+        assertThat(removed.friends()).isEmpty();
+        assertThat(accounts.removeFriend(alice.sessionToken(), "friend-remove-001",
+                accepted.friends().getFirst().friendshipId()).friends()).isEmpty();
+    }
+
+    @Test
+    void administratorCanAuditWalletResetPasswordAndManageFriendships() {
+        AuthResult admin = accounts.register("Operations Admin", "ops_admin", "correct-horse-10");
+        AuthResult target = accounts.register("Operations Target", "ops_target", "correct-horse-11");
+        AuthResult peer = accounts.register("Operations Peer", "ops_peer", "correct-horse-12");
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        jdbc.update("UPDATE identity_account SET is_admin = TRUE WHERE account_id = "
+                + "(SELECT account_id FROM poker_user WHERE player_id = 'ops_admin')");
+        var targetAccount = accounts.adminAccounts(admin.sessionToken()).stream()
+                .filter(row -> row.primaryGameId().equals("ops_target")).findFirst().orElseThrow();
+        var peerAccount = accounts.adminAccounts(admin.sessionToken()).stream()
+                .filter(row -> row.primaryGameId().equals("ops_peer")).findFirst().orElseThrow();
+
+        var adjusted = accounts.adjustAccountWallet(admin.sessionToken(), "admin-wallet-001",
+                targetAccount.accountId(), 750, 20, "integration test grant");
+        var repeated = accounts.adjustAccountWallet(admin.sessionToken(), "admin-wallet-001",
+                targetAccount.accountId(), 750, 20, "integration test grant");
+        assertThat(adjusted.wallet()).isEqualTo(new WalletSnapshot(10_750, 20));
+        assertThat(repeated).isEqualTo(adjusted);
+
+        var friendship = accounts.createAdminFriendship(admin.sessionToken(), "admin-friend-001",
+                targetAccount.accountId(), peerAccount.accountId());
+        assertThat(friendship.status()).isEqualTo("ACCEPTED");
+        assertThat(accounts.friends(target.sessionToken()).friends())
+                .extracting("gameId").contains("ops_peer");
+        accounts.removeAdminFriendship(admin.sessionToken(), "admin-friend-remove-001",
+                friendship.friendshipId());
+        assertThat(accounts.friends(target.sessionToken()).friends()).isEmpty();
+
+        accounts.resetAccountPassword(admin.sessionToken(), "admin-password-001",
+                targetAccount.accountId(), "replacement-horse-11");
+        assertThatThrownBy(() -> accounts.profile(target.sessionToken()))
+                .isInstanceOfSatisfying(AccountException.class,
+                        error -> assertThat(error.code()).isEqualTo(AccountErrorCode.UNAUTHORIZED));
+        assertThatThrownBy(() -> accounts.login("Operations Target", "ops_target", "correct-horse-11"))
+                .isInstanceOfSatisfying(AccountException.class,
+                        error -> assertThat(error.code()).isEqualTo(AccountErrorCode.INVALID_CREDENTIALS));
+        assertThat(accounts.login("Operations Target", "ops_target", "replacement-horse-11").profile().gameId())
+                .isEqualTo("ops_target");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_audit_log WHERE admin_account_id = "
+                + "(SELECT account_id FROM poker_user WHERE player_id = 'ops_admin')", Long.class))
+                .isEqualTo(4L);
     }
 
     @Test

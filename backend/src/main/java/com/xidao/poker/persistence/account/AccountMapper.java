@@ -11,6 +11,8 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
+import com.xidao.poker.application.account.AdminOverview;
+
 @Mapper
 public interface AccountMapper {
     @Select("""
@@ -141,8 +143,9 @@ public interface AccountMapper {
     UUID lockGameIdOwner(@Param("gameId") String gameId);
 
     @Insert("""
-            INSERT INTO account_session (token_hash, account_id, game_id, created_at, expires_at)
-            VALUES (#{tokenHash}, #{accountId}, #{gameId}, #{now}, #{expiresAt})
+            INSERT INTO account_session
+                (token_hash, account_id, game_id, created_at, expires_at, last_seen_at)
+            VALUES (#{tokenHash}, #{accountId}, #{gameId}, #{now}, #{expiresAt}, #{now})
             """)
     int insertSession(String tokenHash, UUID accountId, String gameId, Instant now, Instant expiresAt);
 
@@ -154,6 +157,15 @@ public interface AccountMapper {
 
     @Update("UPDATE account_session SET revoked_at = #{now} WHERE token_hash = #{tokenHash} AND revoked_at IS NULL")
     int revokeSession(String tokenHash, Instant now);
+
+    @Update("""
+            UPDATE account_session SET last_seen_at = #{now}
+            WHERE token_hash = #{tokenHash} AND revoked_at IS NULL AND expires_at > #{now}
+            """)
+    int touchSession(String tokenHash, Instant now);
+
+    @Update("UPDATE account_session SET revoked_at = #{now} WHERE account_id = #{accountId} AND revoked_at IS NULL")
+    int revokeAllSessions(UUID accountId, Instant now);
 
     @Select("SELECT chip_balance FROM account_wallet WHERE account_id = #{accountId} FOR UPDATE")
     Long lockWallet(@Param("accountId") UUID accountId);
@@ -194,11 +206,176 @@ public interface AccountMapper {
 
     @Select("""
             SELECT code_hash, currency, reward_amount, max_redemptions, redeemed_count,
-                   valid_from, valid_until, enabled
+                   valid_from, valid_until, enabled, created_at
             FROM redemption_code WHERE code_hash = #{codeHash}
             FOR UPDATE
             """)
     RedemptionCodeRow lockRedemptionCode(@Param("codeHash") String codeHash);
+
+    @Select("""
+            SELECT code_hash, currency, reward_amount, max_redemptions, redeemed_count,
+                   valid_from, valid_until, enabled, created_at
+            FROM redemption_code
+            ORDER BY created_at DESC, code_hash
+            """)
+    List<RedemptionCodeRow> listRedemptionCodes();
+
+    @Insert("""
+            INSERT INTO redemption_code
+                (code_hash, currency, reward_amount, max_redemptions, redeemed_count,
+                 valid_from, valid_until, enabled, created_at)
+            VALUES (#{codeHash}, #{currency}, #{rewardAmount}, #{maxRedemptions}, 0,
+                    #{validFrom}, #{validUntil}, TRUE, #{now})
+            ON CONFLICT (code_hash) DO NOTHING
+            """)
+    int insertRedemptionCode(String codeHash, String currency, long rewardAmount,
+                             Integer maxRedemptions, Instant validFrom, Instant validUntil,
+                             Instant now);
+
+    @Update("UPDATE redemption_code SET enabled = #{enabled} WHERE code_hash = #{codeHash}")
+    int setRedemptionCodeEnabled(String codeHash, boolean enabled);
+
+    @Select("""
+            SELECT
+              (SELECT COUNT(*) FROM identity_account) AS accounts,
+              (SELECT COUNT(*) FROM identity_account WHERE is_admin = TRUE) AS administrators,
+              (SELECT COUNT(*) FROM redemption_code WHERE enabled = TRUE) AS enabled_redemption_codes,
+              (SELECT COUNT(*) FROM redemption_claim) AS redemption_claims,
+              (SELECT COUNT(*) FROM mail_message) AS mail_messages,
+              (SELECT COUNT(*) FROM account_mail) AS delivered_mail,
+              (SELECT COUNT(*) FROM account_cosmetic) AS granted_cosmetics
+            """)
+    AdminOverview adminOverview();
+
+    @Select("SELECT operation, target_key FROM admin_operation_request WHERE request_id = #{requestId}")
+    AdminOperationRow findAdminOperation(@Param("requestId") String requestId);
+
+    @Insert("""
+            INSERT INTO admin_operation_request
+                (request_id, admin_account_id, operation, target_key, created_at)
+            VALUES (#{requestId}, #{adminAccountId}, #{operation}, #{targetKey}, #{now})
+            """)
+    int insertAdminOperation(String requestId, UUID adminAccountId, String operation,
+                             String targetKey, Instant now);
+
+    @Insert("""
+            INSERT INTO admin_audit_log
+                (audit_id, admin_account_id, action, target_key, details, created_at)
+            VALUES (#{auditId}, #{adminAccountId}, #{action}, #{targetKey}, #{details}, #{now})
+            """)
+    int insertAdminAudit(UUID auditId, UUID adminAccountId, String action,
+                         String targetKey, String details, Instant now);
+
+    @Select("""
+            SELECT f.friendship_id, f.requester_id,
+                   requester.primary_game_id AS requester_game_id,
+                   requester.avatar_key AS requester_avatar_key,
+                   EXISTS(SELECT 1 FROM account_session s WHERE s.account_id = f.requester_id
+                          AND s.revoked_at IS NULL AND s.expires_at > #{now}
+                          AND s.last_seen_at >= #{onlineAfter}) AS requester_online,
+                   f.addressee_id,
+                   addressee.primary_game_id AS addressee_game_id,
+                   addressee.avatar_key AS addressee_avatar_key,
+                   EXISTS(SELECT 1 FROM account_session s WHERE s.account_id = f.addressee_id
+                          AND s.revoked_at IS NULL AND s.expires_at > #{now}
+                          AND s.last_seen_at >= #{onlineAfter}) AS addressee_online,
+                   f.status, f.updated_at
+            FROM friendship f
+            JOIN identity_account requester ON requester.account_id = f.requester_id
+            JOIN identity_account addressee ON addressee.account_id = f.addressee_id
+            WHERE f.requester_id = #{accountId} OR f.addressee_id = #{accountId}
+            ORDER BY f.updated_at DESC
+            """)
+    List<FriendshipViewRow> listFriendships(UUID accountId, Instant now, Instant onlineAfter);
+
+    @Select("""
+            SELECT friendship_id, requester_id, addressee_id, status
+            FROM friendship WHERE friendship_id = #{friendshipId} FOR UPDATE
+            """)
+    FriendshipStateRow lockFriendship(@Param("friendshipId") UUID friendshipId);
+
+    @Select("""
+            SELECT friendship_id, requester_id, addressee_id, status
+            FROM friendship
+            WHERE (requester_id = #{firstId} AND addressee_id = #{secondId})
+               OR (requester_id = #{secondId} AND addressee_id = #{firstId})
+            FOR UPDATE
+            """)
+    FriendshipStateRow lockFriendshipPair(UUID firstId, UUID secondId);
+
+    @Insert("""
+            INSERT INTO friendship
+                (friendship_id, requester_id, addressee_id, status, created_at, updated_at)
+            VALUES (#{friendshipId}, #{requesterId}, #{addresseeId}, #{status}, #{now}, #{now})
+            """)
+    int insertFriendship(UUID friendshipId, UUID requesterId, UUID addresseeId,
+                         String status, Instant now);
+
+    @Update("UPDATE friendship SET status = 'ACCEPTED', updated_at = #{now} WHERE friendship_id = #{friendshipId} AND status = 'PENDING'")
+    int acceptFriendship(UUID friendshipId, Instant now);
+
+    @org.apache.ibatis.annotations.Delete("DELETE FROM friendship WHERE friendship_id = #{friendshipId}")
+    int deleteFriendship(@Param("friendshipId") UUID friendshipId);
+
+    @Select("""
+            SELECT operation, target_key FROM friend_operation_request
+            WHERE account_id = #{accountId} AND request_id = #{requestId}
+            """)
+    FriendOperationRow findFriendOperation(UUID accountId, String requestId);
+
+    @Insert("""
+            INSERT INTO friend_operation_request
+                (account_id, request_id, operation, target_key, created_at)
+            VALUES (#{accountId}, #{requestId}, #{operation}, #{targetKey}, #{now})
+            """)
+    int insertFriendOperation(UUID accountId, String requestId, String operation,
+                              String targetKey, Instant now);
+
+    @Select("SELECT EXISTS(SELECT 1 FROM identity_account WHERE account_id = #{accountId})")
+    boolean accountExists(@Param("accountId") UUID accountId);
+
+    @Select("""
+            SELECT a.account_id, a.real_name, a.primary_game_id, a.avatar_key,
+                   a.is_admin AS administrator, w.chip_balance, w.crystal_balance,
+                   EXISTS(SELECT 1 FROM account_session s WHERE s.account_id = a.account_id
+                          AND s.revoked_at IS NULL AND s.expires_at > #{now}
+                          AND s.last_seen_at >= #{onlineAfter}) AS online
+            FROM identity_account a
+            JOIN account_wallet w ON w.account_id = a.account_id
+            ORDER BY a.created_at, a.account_id
+            """)
+    List<AdminAccountRow> listAdminAccounts(Instant now, Instant onlineAfter);
+
+    @Select("""
+            SELECT f.friendship_id, f.requester_id,
+                   requester.primary_game_id AS requester_game_id,
+                   requester.avatar_key AS requester_avatar_key,
+                   FALSE AS requester_online,
+                   f.addressee_id,
+                   addressee.primary_game_id AS addressee_game_id,
+                   addressee.avatar_key AS addressee_avatar_key,
+                   FALSE AS addressee_online,
+                   f.status, f.updated_at
+            FROM friendship f
+            JOIN identity_account requester ON requester.account_id = f.requester_id
+            JOIN identity_account addressee ON addressee.account_id = f.addressee_id
+            ORDER BY f.updated_at DESC
+            """)
+    List<FriendshipViewRow> listAllFriendships();
+
+    @Update("""
+            UPDATE account_wallet
+            SET chip_balance = chip_balance + #{chipDelta},
+                crystal_balance = crystal_balance + #{crystalDelta},
+                version = version + 1, updated_at = #{now}
+            WHERE account_id = #{accountId}
+              AND chip_balance + #{chipDelta} >= 0
+              AND crystal_balance + #{crystalDelta} >= 0
+            """)
+    int adjustWallet(UUID accountId, long chipDelta, long crystalDelta, Instant now);
+
+    @Update("UPDATE identity_account SET password_hash = #{passwordHash}, updated_at = #{now} WHERE account_id = #{accountId}")
+    int updatePassword(UUID accountId, String passwordHash, Instant now);
 
     @Select("""
             SELECT currency, reward_amount FROM redemption_claim
