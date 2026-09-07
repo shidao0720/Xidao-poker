@@ -75,3 +75,6 @@ release/
 # Local-only design previews and assets without confirmed redistribution rights
 frontend/design-showcase/
 frontend/local-assets-backup/
+
+# Private development instructions (keep the local file)
+/开发注意事项.txt

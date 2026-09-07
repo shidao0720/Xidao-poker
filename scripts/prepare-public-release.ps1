@@ -17,10 +17,12 @@ if ($branch -ne 'main') { throw 'Check out main before preparing a release.' }
 if (Invoke-Git -GitArgs @('-C', $source, 'status', '--porcelain')) {
     throw 'Commit all non-ignored changes first. Private ignored files are not copied.'
 }
-$excludes = @(Get-Content (Join-Path $PSScriptRoot 'public-release-excludes.txt') |
+$excludes = @(Get-Content (Join-Path $PSScriptRoot 'public-release-excludes.txt') -Encoding UTF8 |
     ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
 foreach ($path in $excludes) {
-    if ($path -notmatch '^frontend/[A-Za-z0-9_./-]+$' -or $path.Contains('..')) {
+    # Permit Unicode root-level text documents without allowing shell syntax,
+    # absolute paths, traversal, wildcards, or a broader directory exclusion.
+    if ($path -notmatch '^(?:frontend/[A-Za-z0-9_./-]+|[\p{L}\p{N}_-]+\.txt)$' -or $path.Contains('..')) {
         throw "Unsafe exclusion path: $path"
     }
 }

@@ -25,7 +25,7 @@ release/public-<时间>/
 
 ## 清理范围与校验
 
-精确排除列表在 [public-release-excludes.txt](../scripts/public-release-excludes.txt)：整个 `design-showcase`、本地素材备份目录、旧音乐、12 张 JPG 头像、旧牌面样图和两张旧 Logo PNG。保留公开 SVG、原创合成音乐、代码和技术文档。
+精确排除列表在 [public-release-excludes.txt](../scripts/public-release-excludes.txt)：整个 `design-showcase`、本地素材备份目录、旧音乐、12 张 JPG 头像、旧牌面样图、两张旧 Logo PNG，以及根目录的私人开发说明。排除列表以 UTF-8 读取，支持中文文件名。保留公开 SVG、原创合成音乐、代码和英文技术文档。
 
 仅发布 `main` 的完整祖先历史，不发布其他分支、远程跟踪引用或标签；全部原始 refs 保留在原仓库与私有 Bundle 中。每个提交仍保留作者、时间、说明和父子关系（提交编号因内容改变而变化）。只包含被排除文件的提交也不主动裁掉。旧提交的素材引用可能失效；历史用于阅读演进，当前 HEAD 才是公开版运行入口。
 
