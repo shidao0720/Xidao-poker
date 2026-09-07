@@ -18,7 +18,7 @@ if (Invoke-Git -GitArgs @('-C', $source, 'status', '--porcelain')) {
     throw 'Commit all non-ignored changes first. Private ignored files are not copied.'
 }
 $excludes = @(Get-Content (Join-Path $PSScriptRoot 'public-release-excludes.txt') |
-    Where-Object { $_.Trim().Length -gt 0 })
+    ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
 foreach ($path in $excludes) {
     if ($path -notmatch '^frontend/[A-Za-z0-9_./-]+$' -or $path.Contains('..')) {
         throw "Unsafe exclusion path: $path"
