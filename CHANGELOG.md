@@ -8,6 +8,9 @@
 
 ### Added
 
+- 添加独立公开发布副本生成脚本、精确素材历史排除清单和发布流程文档；保留原始开发历史及私有 Bundle，校验公开副本路径、对象库和源码树，不自动推送。
+- 添加公开发布素材清单 `ASSET_LICENSES.md`、原创 Xidao Poker SVG Logo、12 个替代摄影头像的原创抽象 SVG，以及由确定性振荡器生成、不含第三方采样的大厅循环音乐。
+- 添加可重复生成公开版背景音乐的 `scripts/generate-public-bgm.mjs`。
 - Added persistent friend requests, accept/reject/remove flows, and friend-only online presence backed by per-session heartbeats. Multi-device sessions are evaluated independently and presence expires after missed heartbeats.
 - Extended Operations with administrator account lookup, audited chip/crystal adjustments, BCrypt password reset with old-session revocation, and friendship graph creation/removal. Password plaintext and password hashes are never exposed to the UI or logs.
 - Added an administrator-only Operations page with live account/mail/cosmetic metrics, redemption-code creation and enable/disable controls, and catalog-backed global reward mail composition. Administrator mutations carry idempotent `requestId` values; redemption plaintext is returned once and only its SHA-256 digest is stored.
@@ -95,6 +98,9 @@
 
 ### Changed
 
+- 审查并更新 README：补充 Docker 首次启动、现有页面与权限、管理员初始化、数据卷与 Git 边界、旧界面重建排查；同步好友/Arena 功能、数据库迁移、依赖要求和已有测试报告口径。
+- 登录页与大厅的公开版 Logo 采用 02「月蚀字徽」，移除右上角粉色小三角，保留银白交错字徽、蓝色弧线与 XIDAO / POKER 字样。
+- 公开构建不再依赖设计预览、摄影头像、旧主题 Logo、牌面样图或授权未确认的音乐；这些本地素材迁移到 Git/Docker 均忽略的备份目录，主程序资源引用全部切换到公开安全替代项。
 - 账户模式下 HTTP 与 WebSocket 身份由 HttpOnly、SameSite=Strict 会话 Cookie 认证；服务端使用数据库游戏 ID 覆盖握手查询中的自报身份，原始会话令牌只返回 Cookie 且日志不记录。
 - `PLAYER_LEFT` 增加服务端最终筹码字段，资金结算监听器只以该权威事件返还托管筹码；临时数据库失败会使用稳定请求号重试。
 - 创建/删除房间在账户模式下要求登录，游客模式保持原有局域网行为。

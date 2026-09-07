@@ -6,6 +6,7 @@ backend/target
 frontend/node_modules
 frontend/dist
 frontend/design-showcase
+frontend/local-assets-backup
 logs
 release
 *.log

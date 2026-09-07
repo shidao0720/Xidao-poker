@@ -25,7 +25,7 @@ export function LoginPage() {
     <main className="identity-shell">
       <div className="identity-signal" aria-hidden="true" />
       <section className="identity-card">
-        <img src="/assets/images/ui/fate-stay-poker-logo.png" alt="Fate stay poker" />
+        <img src="/assets/images/ui/xidao-poker-logo.svg" alt="Xidao Poker" />
         <span className="identity-code">IDENTITY OBSERVATION GATE</span>
         <h1>{kind === 'login' ? 'Verify master identity' : 'Obtain master identity'}</h1>
         <p>真实姓名仅用于身份归属验证，不会展示给牌桌中的其他玩家。</p>

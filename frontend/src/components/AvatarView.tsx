@@ -27,18 +27,18 @@ export const AVATAR_OPTIONS: Array<{ key: AvatarKey; label: string }> = [
 ]
 
 const avatarFiles: Partial<Record<AvatarKey, string>> = {
-  bobo: 'BOBO.jpg',
-  god: 'GOD.jpg',
-  lian: 'LIAN.jpg',
-  niu: 'NIU.jpg',
-  yun: 'YUN.jpg',
-  zhen: 'ZHEN.jpg',
-  zhi: 'ZHI.jpg',
-  dna: 'DNA.jpg',
-  li: 'LI.jpg',
-  lu: 'LU.jpg',
-  wu: 'WU.jpg',
-  zhan: 'zhan.jpg',
+  bobo: 'bobo.svg',
+  god: 'god.svg',
+  lian: 'lian.svg',
+  niu: 'niu.svg',
+  yun: 'yun.svg',
+  zhen: 'zhen.svg',
+  zhi: 'zhi.svg',
+  dna: 'dna.svg',
+  li: 'li.svg',
+  lu: 'lu.svg',
+  wu: 'wu.svg',
+  zhan: 'zhan.svg',
 }
 
 export function avatarKey(value: string | null | undefined): AvatarKey {

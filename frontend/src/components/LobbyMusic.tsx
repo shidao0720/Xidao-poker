@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-const MUSIC_PATH = '/assets/audio/music/gate-of-steiner.mp4'
+const MUSIC_PATH = '/assets/audio/music/xidao-signal-loop.wav'
 
 export function BackgroundMusic({ paused }: { paused: boolean }) {
   const audioRef = useRef<HTMLAudioElement>(null)

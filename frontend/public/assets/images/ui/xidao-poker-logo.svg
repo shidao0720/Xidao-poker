@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 360" role="img" aria-labelledby="title description">
+  <title id="title">Xidao Poker</title>
+  <desc id="description">Eclipse monogram: interwoven silver strokes and open blue arcs.</desc>
+  <defs>
+    <linearGradient id="silver" x1="0" y1="0" x2=".35" y2="1">
+      <stop stop-color="#ffffff"/>
+      <stop offset=".5" stop-color="#e6eaf5"/>
+      <stop offset="1" stop-color="#869bbd"/>
+    </linearGradient>
+  </defs>
+  <path d="M462 50a78 78 0 1 0 0 151" fill="none" stroke="#759bcd" stroke-width="1.5"/>
+  <path d="M337 51a89 89 0 0 1 130 105" fill="none" stroke="#354966" stroke-width="1"/>
+  <path d="m370 56 68 113h-16L354 56zm76 0h10l-80 113h-10z" fill="url(#silver)"/>
+  <text x="410" y="264" text-anchor="middle" fill="url(#silver)" font-family="Georgia,serif" font-size="47" letter-spacing="15">XIDAO</text>
+  <text x="410" y="300" text-anchor="middle" fill="#8496b4" font-family="Georgia,serif" font-size="13" letter-spacing="9">POKER</text>
+</svg>

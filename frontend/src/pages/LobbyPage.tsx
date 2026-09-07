@@ -132,8 +132,8 @@ export function LobbyPage() {
       <section className="lobby-hero">
         <img
           className="lobby-logo-artwork"
-          src="/assets/images/ui/fate-stay-poker-logo.png"
-          alt="Fate stay poker"
+          src="/assets/images/ui/xidao-poker-logo.svg"
+          alt="Xidao Poker"
           draggable="false"
         />
       </section>

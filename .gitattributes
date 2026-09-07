@@ -10,9 +10,9 @@
 *.gif binary
 *.webp binary
 *.ico binary
+*.wav binary
 *.woff binary
 *.woff2 binary
 *.ttf binary
 *.jar binary
 *.zip binary
-

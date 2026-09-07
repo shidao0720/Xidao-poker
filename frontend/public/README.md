@@ -36,7 +36,10 @@ assets/
 
 | 路径 | 用途 | 来源/作者 | 许可证 |
 | --- | --- | --- | --- |
-| `assets/images/ui/fate-stay-poker-logo.png` | B 主题标题 Logo | shidao0720 提供 | 项目自有素材 |
-| `assets/images/ui/fate-stay-poker-logo-source.png` | Logo 原始黑底源文件 | shidao0720 提供 | 项目自有素材 |
-| `assets/images/avatars/*` | 账户和牌桌预置头像（SVG/JPG） | Xidao Poker | 项目自有素材 |
-| `assets/audio/music/gate-of-steiner.mp4` | 除牌桌外页面的循环背景音乐 | shidao0720 提供 | 发布至公开仓库前需确认再分发授权 |
+| `favicon.svg` | 浏览器页签图标 | Xidao Poker | 仓库 MIT License |
+| `assets/images/ui/xidao-poker-logo.svg` | 登录页与大厅 Logo | Xidao Poker | 仓库 MIT License |
+| `assets/images/avatars/*.svg` | 账户、好友、牌桌和 Arena 头像 | Xidao Poker | 仓库 MIT License |
+| `assets/audio/music/xidao-signal-loop.wav` | 非牌桌页面的循环背景音乐 | 由仓库脚本原创合成 | 仓库 MIT License |
+
+完整授权边界见仓库根目录的 `ASSET_LICENSES.md`。版权未确认的本地素材只能放在
+被 Git 和 Docker 忽略的 `frontend/local-assets-backup`，不得复制到本目录。

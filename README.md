@@ -1,33 +1,63 @@
 # Xidao LAN Game Hub
 
+
+
+## 项目概览
+
 一个面向局域网多人联机的浏览器游戏项目。德州扑克是首个完整模式，载具竞技是第二个可游玩模式；两个模式都以最多 10 名玩家、同端口部署和服务端权威为基础。
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
+[English technical note: Poker State Machine — Design and Source Code](docs/poker-state-machine.en.md)
+> 当前状态：LAN Alpha，可用于局域网试玩。德州扑克、载具竞技、账户与商城、好友在线状态及运营后台均已实现；公网部署仍待完成。每个房间最多 10 人不代表已验证任意数量房间的并发承载能力。
 
-> 当前状态：局域网端到端 MVP 已可联机运行。德州扑克完整流程、账户与商城体系，以及第二模式“逆相载具竞技”的服务端物理、房间联机与 Canvas 客户端均已落地。
+## 快速开始
 
-## 载具竞技模式（Prototype 01）
+完整账户模式推荐使用 Docker Desktop（Linux 容器模式）。在项目根目录的 PowerShell 中运行；已有 `.env.lan` 时保留原文件和密码：
 
-`/arena` 提供一套原创的简易 2D 反射迷宫载具玩法，用于验证未来多游戏 IP 的实时联机底座：
-
-```text
-竞技大厅创建/加入房间
-    → 最多 10 名驾驶员加入并准备
-    → 房主开始回合
-    → WASD / 方向键驾驶，Space 发射反弹弹丸
-    → 单次命中淘汰，最后幸存者胜场立即 +1
-    → 晶体消散与淘汰播报后，在线人数不少于 2 时自动生成地图并开始下一轮
+```powershell
+# 仅首次创建配置
+if (-not (Test-Path .env.lan)) { Copy-Item .env.lan.example .env.lan }
+# 编辑 .env.lan，设置自己的 POKER_DB_PASSWORD
+.\lan-docker-start.bat
 ```
 
-- 移动、载具互撞、墙体碰撞、弹丸反射、命中和胜负全部由 Java 服务端以约 30 tick/s 裁决。
-- 每轮由服务端生成一张 1800×1080 的 12×8 碎片化随机迷宫；通道按载具碰撞半径预留安全净空，拓扑不存在单一咽喉点，保证任意出生区域之间至少有两条内部独立路线。
-- 每名玩家最多同时保有 5 发弹丸；弹丸命中目标或固定存在 5 秒后归还弹药。墙面反射不消耗弹药，首次反射后弹丸可伤害发射者。
-- Canvas 客户端使用跟随摄像机和平滑绘制，并提供全图小地图；触屏设备提供方向和开火按钮。
-- 回合开始后每隔 20 秒在安全可通行位置生成特殊技能：超载推进、快速射击或可抵挡一次命中的灵子护盾。
-- 中途加入者先观战，下一轮才参战；断线有 20 秒重连窗口，过期移除后不会让回合卡死。
-- 回合不显示 Victory 结算遮罩；3 秒清晰淘汰播报与转场后自动续局，在线人数不足 2 人时才返回准备阶段。
-- 每个房间通过独立公平锁串行处理加入、输入、Tick、断线、重连和离开；客户端命令带 `requestId`，输入另带单调序号。
-- 当前采用抽象蓝色矢量风格，角色、载具、地图主题、技能名称与世界观资源后续可在不改实时协议底座的前提下替换。
+先确认 Docker Desktop 的引擎已经运行。构建成功后，主机打开 `http://localhost:8080`，
+其他玩家打开启动脚本列出的 `http://<主机局域网IPv4>:8080`。选择实际 Wi-Fi / 网线地址，
+不要使用 VPN 或 Docker 虚拟网卡地址；主机和 Docker 服务需要保持运行。
+如果设置了 `POKER_HTTP_PORT`，请使用对应端口。首次构建需要联网下载依赖。
+
+Docker 构建已包含 Java、Maven 和 Node 环境，主机无需另外安装这些工具；本地源码开发要求见
+[本地开发环境](#本地开发环境)。不使用 PostgreSQL 的游客模式请参阅同节中的 `lan-start.bat`。
+
+## 已实现的页面与功能
+
+| 页面 | 路径 | 内容 |
+| --- | --- | --- |
+| PLAY | `/play` | 扑克大厅、创建与加入房间、离桌盈亏 |
+| ARENA | `/arena` | 载具竞技大厅、随机地图与连续回合 |
+| FRIENDS | `/friends` | 申请、接受、拒绝、删除好友与在线状态 |
+| LEADERBOARD | `/leaderboard` | 胜利手数、累计奖金、单手净收益三个 Top 3 |
+| STORE | `/store` | 英魂结晶购买外观与装备；主页风格分类暂为空 |
+| 个人主页 | `/profile` | 头像、装扮、钱包兑换与兑换码 |
+| 站内邮件 | `/mail` | 公告、通知与奖励附件领取 |
+| ADMIN | `/admin` | 兑换码、群发邮件、账号余额、密码重置及好友关系管理 |
+
+账户、好友、商城、邮件、排行榜和运营后台需要 PostgreSQL；ADMIN 还要求管理员权限。
+未登录时会显示登录/注册页面，根路径 `/` 登录后进入 PLAY。
+好友关系归属于账户，前端每 20 秒发送登录会话心跳，服务端以最近 45 秒内的有效会话判定在线，
+因此关闭页面后的离线标记有延迟；当前尚未实现好友邀请入房或聊天。
+
+### 管理员初始化
+
+当前 LAN 版本在数据库没有管理员时，会尝试将新注册账户设为管理员；V9 迁移对已有数据库
+会选取最早创建的账户作为初始管理员。新部署请由部署者先完成注册，再邀请朋友加入。
+这不是固定用户名或内置密码，也不是已经完成公网加固的管理员初始化方案。
+
+管理员可查看账号资料和货币、调整余额、编辑好友关系并重置密码；接口不提供明文密码或
+密码哈希。重置密码会撤销该账户已有登录会话。货币调整与好友管理等操作会记录审计信息。
+
+V8 迁移包含公开测试兑换码 `FATE-STAY-POKER`，每个账户可领取一次 100 英魂结晶。
+它不是私人运营凭据；如不需要该测试奖励，可在 ADMIN 中停用。
 
 ## 目标游戏流程
 
@@ -44,7 +74,7 @@
     → 开始下一手
 ```
 
-计划支持的核心能力：
+已实现的扑克核心能力：
 
 - 最多 10 人同桌，局域网浏览器访问
 - 创建房间、加入房间、准备和房主开始
@@ -85,7 +115,7 @@ Redis 被视为后期优化项，不是第一版核心依赖。
 ```text
 React Client
     │
-    ├── HTTP：房间列表、创建与空房删除
+    ├── HTTP：房间目录、账户、好友、钱包、商城与运营接口
     └── WebSocket：加入/重连、玩家意图、实时事件、状态快照
              │
              ▼
@@ -121,6 +151,10 @@ Controller / WsHandler → Application Service → RoomRuntime → Game Engine
 ```
 
 游戏引擎不依赖 Spring、WebSocket、数据库或前端协议，可以直接通过 JUnit 驱动。
+
+上图展开的是扑克模式。载具模式使用独立的
+`ArenaApplicationService → ArenaRoomRuntime → ArenaSession`，以约 30 tick/s
+推进物理状态；两种游戏共享账户基础设施，各自维护房间状态与 WebSocket 协议。
 
 前端遵循单向数据流：
 
@@ -268,7 +302,7 @@ currentActor != null  →  currentActor.canAct() == true
 - `ROOM_SNAPSHOT`：加入房间、刷新页面、断线重连时替换全部本地牌局状态
 - Event：正常游戏过程中应用实时增量事件
 
-每个事件将带有单调递增序号。客户端发现序号不连续时应请求新快照，而不是猜测缺失状态。收到快照时必须 replace state，不能与旧状态盲目 merge。
+每个事件带有单调递增序号。客户端发现序号不连续时请求回放或新快照，不猜测缺失状态。收到快照时必须 replace state，不能与旧状态盲目 merge。
 
 重连在同一个房间原子操作中完成三件事：校验客户端持有的旧连接 epoch、替换连接 ID、递增 epoch，并生成该玩家专属快照加入定向 outbox。每个 Snapshot delivery 都绑定目标 `playerId + connectionId + connectionEpoch`；发送适配器只能投递到完全匹配的当前连接，排队期间已经失效的旧连接快照必须丢弃。命令确认只允许携带发起者自己的快照，绝不会包含“所有玩家各自的私有快照”。如果增量广播失败，发送器会自动为所有在线玩家排入隐私过滤后的恢复快照。
 
@@ -427,7 +461,7 @@ timestamp level module roomId gameId handId playerId event
 
 `GameApplicationService` 统一记录 `ROOM_COMMAND_RECEIVED`、`ROOM_COMMAND_COMMITTED`、`ROOM_COMMAND_REJECTED` 及最终事件序号；WebSocket 层记录 `WS_CONNECT`、`WS_DISCONNECT`、`WS_MESSAGE_RECEIVED`、`WS_MESSAGE_SENT` 和拒绝原因。`RoomEventDispatcher` 会记录发送失败并触发 Snapshot 恢复。
 
-日志不能包含其他玩家尚未公开的手牌。服务端内部如需调试手牌，只能在开发环境受控输出。
+日志不得包含密码、会话或重连令牌、任何尚未公开的手牌。手牌问题通过测试用固定种子和合成牌局复现，不将真实玩家私有状态打印到日志中。
 
 ### Debug Snapshot
 
@@ -518,9 +552,13 @@ npm run build
 
 前端状态同步测试重点锁定 Snapshot 整体替换、事件序号缺口、服务端行动投影，以及观察者/破产玩家不进入行动队列。测试数量会随开发持续增长，以本地验证和 CI 的实际结果为准。
 
-当前本地基线：后端 166 项测试通过，覆盖扑克规则、PostgreSQL 事务、HTTP/WebSocket、随机迷宫双通路、弹丸寿命/弹药/自伤、载具技能周期、自动续局与 300 回合连续运行不变量；前端 38 项状态同步、连接错误、局域网 ID、协议兼容与玩家行动协议测试通过，lint、typecheck 和生产构建均通过。
+最近一次后端完整测试报告为 169 项、0 失败、0 错误、0 跳过，包含好友关系、在线状态和管理员操作的 PostgreSQL 集成测试；前端最近一次完整检查为 38 项测试通过，lint、typecheck 和生产构建通过。这些是已有验证基线，不代表每次文档或素材修改都重跑了全部测试。
+
+后端还覆盖随机迷宫双通路、弹丸寿命/弹药/自伤、载具技能周期、自动续局与 300 回合连续运行不变量。Testcontainers 需要可访问的 Docker 引擎；普通镜像构建阶段没有 Docker Socket 时，10 项数据库集成测试会跳过。应分别检查测试报告的 Tests、Failures、Errors、Skipped，不能把“169 项运行、10 项跳过”写成“169 项全部通过”。自动模拟不替代真实多设备网络与延迟测试。
 
 ## Git 工作流
+
+公开版本使用独立的清理历史副本，原开发仓库保留完整历史。生成方式、排除范围及后续更新注意事项见 [公开发布副本流程](docs/public-release.md)。不要把原仓库或整个 `release/` 目录直接上传。
 
 ### 分支策略
 
@@ -547,61 +585,13 @@ refactor(player): replace lifecycle booleans with status enum
 
 一次提交只处理一个清晰主题。规则修复必须同时提交能够复现该问题的测试。
 
-### Pull Request 要求
-
-每个 PR 至少说明：
-
-- 解决什么问题
-- 为什么采用当前方案
-- 是否改变协议、数据库或游戏规则
-- 如何测试
-- 是否存在迁移或兼容风险
-
-合并前必须满足：
-
-- `mvn test` 通过
-- 前端 lint、typecheck 和测试通过（前端建立后）
-- 没有提交密码、数据库凭据、私人 IP 或未脱敏日志
-- 协议变更同步更新共享类型和 README
-- 规则变更包含对应测试
-
-推荐使用 Squash Merge，使 `main` 历史保持简洁。发布版本使用语义化版本标签，例如 `v0.1.0`。
-
-### 不应提交的文件
-
-```text
-backend/target/
-frontend/node_modules/
-frontend/dist/
-.env
-.env.*
-!.env.example
-*.log
-IDE user settings
-```
-
-后续将通过 `.gitignore` 固化这些规则。
-
-仓库根目录已经提供 `.gitignore`。如果新增构建工具、运行目录或本地密钥文件，应在首次提交这些文件之前同步更新忽略规则。
-
-### 持续集成
-
-GitHub Actions 配置位于 `.github/workflows/ci.yml`：
-
-- Push 或 Pull Request 到 `main`、`develop` 时运行
-- 使用 Temurin Java 21 执行后端 `mvn test`
-- 测试失败时上传 Surefire 报告，保留 7 天
-- 前端 Job 已预留 Node.js 22 的安装、lint、typecheck、test 和 build，但默认保持 Skipped
-- 需要启用前端 CI 时，在 GitHub 仓库 Variables 中设置 `ENABLE_FRONTEND_CI=true`
-- 同一分支的新提交会取消仍在运行的旧 CI，避免浪费资源
-
-在推送到 GitHub 前，应先在本地运行与 CI 相同的关键检查。
 
 ### Changelog
 
 所有面向使用者或开发者的重要变化都记录在 `CHANGELOG.md` 的 `[Unreleased]` 小节。普通格式化、注释修正和没有行为变化的内部整理可以不记录。
 
 发布时将 `[Unreleased]` 内容移动到带日期的语义化版本中，并创建对应的 Git 标签和 GitHub Release。
+
 
 ## 本地开发环境
 
@@ -634,7 +624,27 @@ lan-docker-start.bat
 
 `compose.lan.yml` 只映射应用端口。PostgreSQL 没有宿主机 `ports` 映射，并位于内部 Docker 网络，局域网设备不能直接访问5432端口。Docker 方式启用账户模式，首次打开网页会进入登录/注册页；不带数据库的 `lan-start.bat` 保留游客局域网模式。
 
-直接刷新 `/rooms/{roomId}` 会由 Spring 转发到 `index.html`；`/api`、`/ws` 和 `/assets` 不参与 SPA 回退，缺失接口或资源仍返回404。
+直接刷新已注册的页面路径（包括 `/play`、`/friends`、`/admin`、`/rooms/{roomId}` 和
+`/arena/{roomId}`）会由 Spring 转发到 `index.html`；`/api`、`/ws` 和静态资源路径
+不参与 SPA 回退，缺失接口或资源仍返回 404。
+
+### 更新后仍显示旧界面
+
+`8080` 提供的是构建时打包的前端。修改源码或 `public` 后：
+
+- Docker 模式：从根目录重新运行 `lan-docker-start.bat`，会重新构建并替换应用容器。
+- JAR 模式：先停止旧服务，运行 `lan-build.bat`，再运行 `lan-start.bat`。`lan-start.bat` 找到有效 JAR 后会直接使用，不会因源码变动自动重新打包。
+- 前端开发模式：运行 `npm run dev`，打开终端给出的 Vite 地址，默认端口 `5173`；不要把它与正式的 `8080` 页面混淆。
+
+重建后可用 `Ctrl + F5` 刷新。更新会中断正在进行的内存牌局，应在无人游戏时操作；
+正常 Compose 重建保留数据库卷。不要使用 `docker compose down -v` 更新服务，该选项会删除数据卷。
+
+Docker 日志可在项目根目录查看：
+
+```shell
+docker compose --env-file .env.lan -f compose.lan.yml ps
+docker compose --env-file .env.lan -f compose.lan.yml logs --tail 100 poker
+```
 
 ### 开发模式
 
@@ -642,7 +652,7 @@ lan-docker-start.bat
 
 - JDK 21
 - Maven 3.9+
-- Node.js 22+
+- Node.js 24 LTS（Docker 构建使用 24；使用 Node.js 22 时至少为 22.13，满足当前 Vite 与 ESLint 的要求）
 - npm 10+
 
 验证环境：
@@ -695,7 +705,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 
 `postgres` Profile 打开 `poker.persistence.enabled` 并读取环境变量。Flyway 不在启动线程中抢先连接数据库，而是在首次账户或历史用例访问数据库时按需迁移；手牌历史迁移或写入失败由有界异步写入器重试，实时牌局不会被历史队列阻塞。账户、钱包和买入事务需要数据库可用，失败时会明确拒绝对应操作，绝不在内存中伪造余额。
 
-首版迁移创建以下表：
+当前 V1–V12 迁移涵盖以下表：
 
 - `game_record`：房间级游戏配置、时间范围和已保存手牌数
 - `poker_user`：局域网玩家 ID 与最近显示名
@@ -712,6 +722,8 @@ mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 - `account_cosmetic`：通过奖励邮件或商城购买取得的装扮库存
 - `cosmetic_purchase`：商城购买请求、价格快照与幂等结果
 - `account_cosmetic_loadout`：每个账户各装扮槽位当前装备项
+- `friendship` / `friend_operation_request`：好友申请、双向好友关系与命令去重
+- `admin_operation_request` / `admin_audit_log`：管理员操作去重和审计
 
 同一手使用 `(game_id, hand_id)` 唯一键。重复异步提交返回 `ALREADY_EXISTS`，不会重复插入行动或累加玩家统计；一手牌的主记录、玩家、行动与统计在同一事务中提交。
 
@@ -725,12 +737,14 @@ Xidao-poker/
 │       ├── main/java/com/xidao/poker/
 │       │   ├── application/
 │       │   │   ├── account/
+│       │   │   ├── arena/
 │       │   │   ├── command/
 │       │   │   ├── history/
 │       │   │   └── room/
 │       │   ├── config/
 │       │   ├── engine/
 │       │   │   ├── action/
+│       │   │   ├── arena/
 │       │   │   ├── card/
 │       │   │   ├── deck/
 │       │   │   ├── eval/
@@ -746,6 +760,7 @@ Xidao-poker/
 │       │   │   └── history/
 │       │   └── web/
 │       │       ├── api/
+│       │       ├── arena/
 │       │       ├── protocol/
 │       │       └── ws/
 │       ├── main/resources/
@@ -760,14 +775,19 @@ Xidao-poker/
 │           └── web/
 ├── frontend/
 │   ├── src/
-│   │   ├── api/              # 大厅 HTTP 客户端
+│   │   ├── api/              # 游戏、账户与运营 HTTP 客户端
+│   │   ├── arena/            # 载具模式协议类型
 │   │   ├── components/       # 手牌、座位、行动栏与连接状态
-│   │   ├── pages/            # 大厅与牌桌路由
+│   │   ├── pages/            # 游戏大厅、对局、账户、好友、商城与后台
 │   │   ├── store/            # Snapshot replace + Event 投影
 │   │   ├── types/            # 与后端协议对齐的类型
 │   │   └── ws/               # 重连、回放与心跳
+│   ├── public/              # 可公开发布的 SVG 与原创合成音乐
 │   ├── package.json
 │   └── vite.config.ts
+├── scripts/                 # 构建、启动与公开音乐生成
+├── compose.lan.yml
+├── ASSET_LICENSES.md
 └── README.md
 ```
 
@@ -792,17 +812,18 @@ Xidao-poker/
 - [x] 服务端权威商城、幂等购买、装扮库存与牌桌装备效果
 - [x] 幂等牌桌买入托管、重连防重复扣款和离桌返还
 - [x] 站内邮件、管理员群发奖励、兑换码核销和离桌净输赢提示
+- [x] 好友申请、接受/拒绝/删除与会话心跳在线状态
+- [x] 运营后台：账号、余额调整、密码重置及好友关系管理
+- [x] Arena 十人房间、随机地图、技能、淘汰播报与自动续局
+- [x] 公开版 SVG Logo、头像和合成 BGM；本地私人素材隔离
 - [x] React 大厅、等待房间和牌桌 MVP
 - [x] 引擎 / 应用层断线重连、旧连接隔离和观战等待下一手
 - [x] WebSocket 30 秒宽限调度与 token / epoch 安全重连
 - [x] React / Spring Boot 同端口 LAN 发布、SPA 路由回退与多网卡地址提示
 - [x] Docker Compose 应用与内部 PostgreSQL 网络（数据库端口不向 LAN 映射）
 - [x] 协议版本与构建版本握手检测
-- [ ] 多浏览器重连联调
-- [ ] 多浏览器 10 人局域网联调
 - [x] Backend Maven Test CI（前端 Job 预留且默认跳过）
 - [x] LAN 容器化构建
-- [ ] 首个 GitHub Release
 
 ## 安全与公平性说明
 
@@ -812,10 +833,34 @@ Xidao-poker/
 
 ## Contributing
 
-项目仍处于架构和核心规则建设阶段。提交功能前请先创建 Issue 或 Discussion 描述场景，特别是涉及德州扑克规则、WebSocket 协议、持久化模型或状态机变更时。
+项目处于 LAN Alpha 迭代阶段。提交功能前请先创建 Issue 或 Discussion 描述场景，特别是涉及游戏规则、WebSocket 协议、持久化模型或状态机变更时。
 
 规则正确性优先于功能数量。任何规则修复都应附带回归测试。
 
 ## License
 
-本项目使用 MIT License。详见仓库根目录的 `LICENSE` 文件。
+本项目代码使用 [MIT License](LICENSE)。公开素材的来源与许可边界见 [ASSET_LICENSES.md](ASSET_LICENSES.md)；本地备份素材不因放在项目目录中自动获得该许可。
+
+
+
+## 载具竞技模式（Prototype 01）
+
+`/arena` 提供一套原创的简易 2D 反射迷宫载具玩法，用于验证未来多游戏 IP 的实时联机底座：
+
+```text
+竞技大厅创建/加入房间
+    → 最多 10 名驾驶员加入并准备
+    → 房主开始回合
+    → WASD / 方向键驾驶，Space 发射反弹弹丸
+    → 单次命中淘汰，最后幸存者胜场立即 +1
+    → 晶体消散与淘汰播报后，在线人数不少于 2 时自动生成地图并开始下一轮
+```
+
+- 移动、载具互撞、墙体碰撞、弹丸反射、命中和胜负全部由 Java 服务端以约 30 tick/s 裁决。
+- 每轮由服务端生成一张 1800×1080 的 12×8 碎片化随机迷宫；通道按载具碰撞半径预留安全净空，拓扑不存在单一咽喉点，保证任意出生区域之间至少有两条内部独立路线。
+- 每名玩家最多同时保有 5 发弹丸；弹丸命中目标或固定存在 5 秒后归还弹药。墙面反射不消耗弹药，首次反射后弹丸可伤害发射者。
+- Canvas 客户端使用跟随摄像机和平滑绘制，并提供全图小地图；触屏设备提供方向和开火按钮。
+- 回合开始后每隔 20 秒在安全可通行位置生成特殊技能：超载推进、快速射击或可抵挡一次命中的灵子护盾。
+- 中途加入者先观战，下一轮才参战；断线有 20 秒重连窗口，过期移除后不会让回合卡死。
+- 回合不显示 Victory 结算遮罩；3 秒清晰淘汰播报与转场后自动续局，在线人数不足 2 人时才返回准备阶段。
+- 每个房间通过独立公平锁串行处理加入、输入、Tick、断线、重连和离开；客户端命令带 `requestId`，输入另带单调序号。

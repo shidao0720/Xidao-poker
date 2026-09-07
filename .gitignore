@@ -71,3 +71,7 @@ $RECYCLE.BIN/
 
 # LAN release staging
 release/
+
+# Local-only design previews and assets without confirmed redistribution rights
+frontend/design-showcase/
+frontend/local-assets-backup/
