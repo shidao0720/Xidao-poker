@@ -1,10 +1,10 @@
-# Xidao LAN Game Hub
-
-
+# Xidao LAN Game Hub｜局域网德州扑克与多人联机游戏
 
 ## 项目概览
 
-一个面向局域网多人联机的浏览器游戏项目。德州扑克是首个完整模式，载具竞技是第二个可游玩模式；两个模式都以最多 10 名玩家、同端口部署和服务端权威为基础。
+一个适合朋友聚会的开源局域网多人游戏平台。内置最多支持 10 人的无限注德州扑克（多人联机纸牌游戏），以及 2D 载具对战游戏。主机启动服务后，同一网络中的玩家通过浏览器即可加入，无需安装游戏客户端。支持 Docker 一键部署，所有筹码均为无现金价值的娱乐点数。
+
+A self-hosted LAN multiplayer browser game hub featuring No-Limit Texas Hold'em poker and 2D vehicle battles. Supports up to 10 players per room, real-time WebSocket communication, and Docker deployment.
 
 项目采用服务端权威（Server Authoritative）架构：客户端只提交玩家意图，所有发牌、行动校验、下注轮转、牌型判断、底池分配和筹码结算均由服务端游戏引擎裁决。
 [English technical note: Poker State Machine — Design and Source Code](docs/poker-state-machine.en.md)
